@@ -1,0 +1,845 @@
+"""
+Classes for generating and manipulating training data for the new AlleleSearcher DNN
+"""
+from copy import deepcopy
+import ast
+from AlleleSearcherLite import AlleleSearcherLite
+# from ReferenceCache import ReferenceCache
+from PySamFastaWrapper import PySamFastaWrapper as ReferenceCache
+from PileupContainerLite import PileupContainerLite
+import vcf
+import sys
+import argparse
+import h5py
+import logging
+import pybedtools
+import os
+from multiprocessing import Pool
+import math
+import numpy as np
+import AnnotateRegions
+import os
+import PileupDataTools
+import collections
+import intervaltree
+from timeit import default_timer as timer
+
+try:
+    profile
+except Exception:
+    def profile(_):
+        return _;
+
+DATAGEN_TIME = 0;
+TENSOR_TIME = 0;
+INTERNAL_TIME0 = 0;
+
+
+def genotype(record, index=0):
+    """
+    Parse genotype in tuple form
+    """
+    separator = None;
+
+    if '|' in record.samples[index]['GT']:
+        separator = '|';
+    elif '/' in record.samples[index]['GT']:
+        separator = '/';
+
+    if separator is None:
+        return None;
+
+    gt = list(map(int, record.samples[index]['GT'].split(separator)));
+
+    return gt;
+
+
+def checkIntersection(hotspot, bedInterval):
+    """
+    Check whether a hotspot is strictly contained within a bedInterval
+
+    :param hotspot: tuple
+        Hotspot tuple
+
+    :param bedInterval: intervaltree.IntervalTree
+        High confidence intervals
+    """
+    bedItems = bedInterval[hotspot[0]: hotspot[1]];
+
+    for item in bedItems:
+        # Check whether any item completely contains the given hotspot
+        if item[0] <= hotspot[0] < hotspot[1] <= item[1]:
+            return True;
+
+    return False;
+
+
+def checkIntersectionRecord(record, bedInterval):
+    """
+    Check whether a record is strictly contained within a bedInterval
+
+    :param hotspot: tuple
+        Hotspot tuple
+
+    :param bedInterval: intervaltree.IntervalTree
+        High-confidence intervals within the given chromosome
+    """
+    item = (record.position, record.position + len(record.ref));
+    return checkIntersection(item, bedInterval);
+
+
+def bedReader(bedfile):
+    bedRegions = collections.defaultdict(intervaltree.IntervalTree);
+
+    with open(bedfile, 'r') as fhandle:
+        for line in fhandle:
+            entries = line.split();
+            chr_, start, stop = entries[0], int(entries[1]), int(entries[2]);
+            bedRegions[chr_].addi(start, stop, None);
+
+    return bedRegions;
+
+
+def createJobSplitWrapper(args):
+    """
+    Wrapper for createJobSplit to be called through multiprocessing
+
+    :param args: tuple
+        Arguments for createJobSplit
+
+    :return: str
+        The command to be run
+    """
+    return createJobSplit(*args);
+
+
+def createJobSplit(bedRegions, highconf, groundTruth, hotspots, prefix, args):
+    """
+    Creates a job split for parallel processing
+
+    :param bedRegions: list
+        List of bed regions which are part of the job split
+
+    :param highconf: bed
+        The high-confidence bed file
+
+    :param groundTruth: str
+        Ground-truth vcf name
+
+    :param hotspots: list
+        List of hotspots within the bedRegions
+
+    :param prefix: str
+        Prefix for temporary files (include temp directory path)
+
+    :param args: ArgumentParser
+        Original arguments passed to the script
+
+    :return: str
+        The command is returned
+    """
+    bedString = "";
+
+    for i, (chromosome, start, stop) in enumerate(bedRegions):
+        bedString += "\n" if i > 0 else "";
+        bedString += "\t".join([chromosome, str(start), str(stop)]);
+
+    subset = pybedtools.BedTool(bedString, from_string=True);
+    vcfBed = pybedtools.BedTool(groundTruth);
+    hcBed = pybedtools.BedTool(highconf);
+    vcfName = os.path.abspath(prefix + ".vcf");
+    hcName = os.path.abspath(prefix + ".bed");
+    hotspotsName = os.path.abspath(prefix + ".txt");
+
+    vcfBed.intersect(subset, header=True).saveas(vcfName);
+    hcBed.intersect(subset).saveas(hcName);
+
+    with open(hotspotsName, 'w') as fhandle:
+        for item in hotspots:
+            fhandle.write(str(item) + '\n');
+
+    cmd = 'python %s' % (os.path.join(os.path.split(os.path.abspath(__file__))[0], "trainData.py"));
+    cmd += " --bam %s" % args.bam;
+    cmd += " --highconf %s" % hcName;
+    cmd += " --ref %s" % args.ref;
+    cmd += " --hotspots %s" % hotspotsName;
+    cmd += " --groundTruth %s" % vcfName;
+    cmd += " --pacbio" if args.pacbio else "";
+    cmd += " --outputPrefix %s" % prefix;
+    cmd += " --featureLength %d" % args.featureLength;
+    cmd += " --hotspotMode %s" % args.hotspotMode;
+
+    if args.bam2 is not None:
+        cmd += " --bam2 %s" % args.bam2;
+
+    if args.chrPrefixBam1 != "":
+        cmd += " --chrPrefixBam1 %s" % args.chrPrefixBam1;
+
+    if args.chrPrefixBam2 != "":
+        cmd += " --chrPrefixBam1 %s" % args.chrPrefixBam2;
+
+    return cmd;
+
+
+def chromosomesInCluster(cluster):
+    """
+    Determine the chromosomes in a cluster of hotspot regions
+
+    :param cluster: list
+        List of hotspot regions
+
+    :return: dict
+        Chromosomes and first last positions within the chromosomes in the cluster
+    """
+    chromosomes = dict();
+
+    for point in cluster:
+        chromosome = point['chromosome'];
+        position = point['position'];
+        if chromosome in chromosomes:
+            values = chromosomes[chromosome];
+            chromosomes[chromosome] = (min(values[0], position), max(values[1], position + 1));
+        else:
+            chromosomes[chromosome] = (position, position + 1);
+
+    return chromosomes;
+
+
+def convertClusterToItems(cluster_):
+    """
+    Convert a cluster of points to items indicating a job-split
+
+    :param cluster_: list
+        List of points
+
+    :return: tuple
+        (cluster_, bedItems)
+    """
+    chromosomes = chromosomesInCluster(cluster_);
+    bedItems = [];
+
+    for key, value in chromosomes.items():
+        bedItems.append((key, value[0] - 10, value[1] + 10));
+
+    logging.debug("Creating cluster of %d points with bed region %s" % (len(cluster_), str(bedItems)));
+
+    return list(cluster_), bedItems;  # Make a copy of cluster
+
+
+def determineJobSplits(hotspots, minSeparation=256, minItemsPerBundle=1024):
+    """
+    Analyze hotspots to provide job-splits
+
+    :param hotspots: str
+        Hotspots filename
+
+    :param minSeparation: int
+        Minimum separation between any two hotspot points in two different files
+
+    :param minItemsPerBundle: int
+        Minimum number of hotspots to be included in a file
+
+    :return: tuple
+        ([hotspot0, hotspot1, ...], [bed0, bed1, ...])
+    """
+    clusters = [];
+    bedRegions = [];
+
+    with open(hotspots, 'r') as fhandle:
+        cluster = [];
+
+        for line in fhandle:
+            point = ast.literal_eval(line);
+            if len(cluster) >= minItemsPerBundle:
+                if measureDistance(cluster[-1], point) >= minSeparation:
+                    cluster_, bedItems = convertClusterToItems(cluster);
+                    logging.debug(
+                        "Pushing cluster items first, last = %s, %s" % (
+                            str(cluster_[0]),
+                            str(cluster_[-1])
+                        )
+                    );
+                    clusters.append(cluster_);
+                    logging.debug(
+                        "Pusing bed entry = %s" % (
+                            str(bedItems),
+                        )
+                    );
+                    bedRegions.append(bedItems);
+                    cluster = [];
+
+            cluster.append(point);
+
+        if len(cluster) > 0:
+            cluster_, bedItems = convertClusterToItems(cluster);
+            logging.debug(
+                "Pusing cluster items first, last = %s, %s" % (
+                    str(cluster_[0]),
+                    str(cluster_[-1])
+                )
+            );
+            logging.debug(
+                "Pusing bed entry = %s" % (
+                    str(bedItems),
+                )
+            );
+            clusters.append(cluster_);
+            bedRegions.append(bedItems);
+
+    logging.debug("Returning %d cluster items, %d bed regions" % (len(clusters), len(bedRegions)));
+
+    return tuple([clusters, bedRegions]);
+
+
+def splitIntoJobs(args):
+    """
+    Main function for generating training data
+
+    :param args: argparse.ArgumentParser
+        Arguments for the script
+    """
+    assert(args.temp is not None), "Provide temp directory for splitting into multiple jobs";
+
+    args.temp = os.path.abspath(args.temp);
+
+    if not os.path.exists(args.temp):
+        os.makedirs(args.temp);
+    else:
+        if not os.path.isdir(args.temp):
+            raise ValueError("%s is not a directory" % args.temp);
+
+    logging.info("Determining split locations for jobs");
+
+    jobSplits = determineJobSplits(args.hotspots, args.minSeparation, args.minNumLocationsPerJob);
+    shellScriptName = os.path.join(args.temp, "jobs.sh")
+    shellScript = open(shellScriptName, 'w');
+
+    logging.info("Creating jobs");
+
+    if args.numThreadsSplit <= 1:
+        for i, items in enumerate(zip(*jobSplits)):
+            cluster, bedItem = items;
+            job = createJobSplit(bedItem, args.highconf, args.groundTruth, cluster, os.path.join(args.temp, "job%d" % i), args);
+            shellScript.write(str(job) + '\n');
+            logging.info("Completed creating %d jobs" % (i + 1));
+    else:
+        workers = Pool(args.numThreadsSplit);
+        args = [(bedItem, args.highconf, args.groundTruth, cluster, os.path.join(args.temp, "job%d" % i), args) for i, (cluster, bedItem) in enumerate(zip(*jobSplits))];
+        for j, job in enumerate(workers.imap_unordered(createJobSplitWrapper, args)):
+            shellScript.write(str(job) + '\n');
+            logging.info("Completed creating %d jobs" % (j + 1));
+
+    shellScript.close();
+    logging.info("Wrote jobs into file %s" % shellScriptName);
+
+
+def groundTruthReader(vcfname):
+    """
+    Generator for reading ground-truth variants
+
+    :param vcfname: str
+        VCF filename
+
+    :return: iter
+        Returns an iterator
+    """
+    reader = vcf.Reader(open(vcfname, 'r'));
+    truthSet = collections.defaultdict(intervaltree.IntervalTree);
+
+    for record in reader:
+        truthSet[record.CHROM].addi(
+            record.POS - 1,
+            record.POS - 1 + len(record.REF),
+            AnnotateRegions.VariantRecord(
+                chromosome=record.CHROM,
+                position=record.POS - 1,
+                ref=record.REF,
+                alt=[str(s) for s in record.ALT],
+                gt=genotype(record),
+            )
+        );
+
+    return truthSet;
+
+
+def createRecord(chromosome, position, refAllele, allelesAtSite):
+    """
+    Creates a candidate record
+
+    :param chromosome: str
+        Chromosome
+
+    :param position: int
+        Position in the chromosome
+
+    :param refAllele: str
+        Reference allele
+
+    :param allelesAtSite: list
+        List of alleles at the given site
+
+    :return AnnotateRegions.VariantRecord
+        VariantRecord object
+    """
+    allelesNoRef = deepcopy(allelesAtSite);
+
+    if refAllele in allelesNoRef:
+        allelesNoRef.remove(refAllele);
+
+    gts = list(range(len(allelesAtSite))) if refAllele in allelesAtSite else [i + 1 for i in range(len(allelesAtSite))];
+
+    candidateRecord = AnnotateRegions.VariantRecord(
+        chromosome=chromosome,
+        position=position,
+        ref=refAllele,
+        alt=allelesNoRef,
+        gt=gts
+    );
+
+    return candidateRecord;
+
+
+def findAlleleIndex(record, allele):
+    """
+    Find the index of an allele in a VCF record
+    """
+    alleles = [record.ref] + record.alt;
+    if allele not in alleles:
+        return -1;
+    else:
+        return alleles.index(allele);
+
+
+def editRecord(record, dict_):
+    """
+    Edit a vcf-record-like object
+
+    :param record: AnnotateRegion.VariantRecord
+        The record to be edited
+
+    :param dict_: dict
+        Dictionary containing keys which need to be edited
+    """
+    recordToDict = {
+        'chromosome': record.chromosome,
+        'position': record.position,
+        'ref': record.ref,
+        'alt': record.alt,
+        'gt': record.gt,
+    };
+
+    for key, value in dict_.items():
+        recordToDict[key] = value;
+
+    return AnnotateRegions.VariantRecord(**recordToDict);
+
+
+def clusterLocations(locations, distance=PileupDataTools.MIN_DISTANCE, maxAlleleLength=80):
+    """
+    Similar to what hotspot reading does, this clusters a list of locations and gives them out
+
+    :param locations: list
+        List of locations (intervaltree.Interval)
+
+    :param distance: int
+        Distance for clustering candidates
+
+    :param maxAlleleLength: int
+        Maximum length of allele
+
+    :return: iter
+        Iterator over the clustered locations
+    """
+    cluster = [];
+
+    for location in locations:
+        if location[1] - location[0] > maxAlleleLength:
+            continue;
+
+        if len(cluster) == 0:
+            cluster.append(location);
+        else:
+            if location[0] - cluster[-1][1] < distance:
+                cluster.append(location);
+            else:
+                yield cluster;
+                cluster = [location];
+
+    if len(cluster) > 0:
+        yield cluster;
+        cluster = [];
+
+
+@profile
+def getLabeledCandidates(
+    chromosome,
+    start,
+    stop,
+    segment,
+    searchers,
+    cluster,
+    truths=None,
+    highconf=None,
+    hotspotMethod="BOTH",
+    maxAlleleLength=80,
+):
+    """
+    Create candidate vcf records for a set of spots, and label them if necessary
+
+    :param chromosome: str
+        Chromosomal region for which we are creating data
+
+    :param start: int
+        Start of the region (includes buffer length)
+
+    :param stop: int
+        Stop-point of the region (includes buffer length)
+
+    :param segment: str
+        Reference segment from start -> stop
+
+    :param searchers: list
+        List of AlleleSearcherLite objects
+
+    :param cluster: list
+        List of hotspot regions in a cluster
+
+    :param truths: collections.defaultdict
+        Ground-truth in the region
+
+    :param highconf: collections.defaultdict
+        Highconfidence bed regions
+
+    :param hotspotMethod: str
+        Whether to use BAM1 or both BAMs to construct hotspots
+
+    :param maxAlleleLength: int
+        Maximum allele length
+    """
+    execStart = timer();
+    global INTERNAL_TIME0;
+
+    candidateRecords = [];
+    candidateRecordsForTruthing = [];
+
+    for spot in cluster:
+        allelesAtSpot = [];
+        allelesAtSpotForTruthing = [];
+        refAllele = segment[spot[0] - start: spot[1] - start];
+
+        if highconf is not None:
+            if not checkIntersection(spot, highconf[chromosome]):
+                continue;
+
+            if spot[1] - spot[0] > maxAlleleLength:
+                continue;
+
+        for i, searcher in enumerate(searchers):
+            candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
+
+            if (i == 0) or (hotspotMethod == "BOTH"):
+                allelesAtSpot += candidates;
+
+        allelesAtSpot = list(set(allelesAtSpot));
+
+        candidateRecords.append(
+            createRecord(
+                chromosome=chromosome, position=spot[0], refAllele=refAllele, allelesAtSite=allelesAtSpot,
+            )
+        );
+
+    candidateRecords = sorted(candidateRecords, key=lambda x: x.position);
+
+    if truths is not None:
+        assert(highconf is not None), "Provide highconf bed if truth is provided";
+
+        # To determine ground-truths actually perform assembly for searcher0 and create candidates
+        # We perform assembly in order to use only alleles that have non-zero support, rather than
+        # alleles that have no support. Sometimes it is possible that labels are created with alleles
+        # with no support (especially in STR regions).
+        candidateRecordsForTruthing = [];
+        searcher = searchers[0];
+
+        for spot in cluster:
+            if not checkIntersection(spot, highconf[chromosome]):
+                continue;
+
+            searcher.assemble(spot[0], spot[1]);
+            refAllele = segment[spot[0] - start: spot[1] - start];
+
+            candidateRecordsForTruthing.append(
+                createRecord(
+                    chromosome=chromosome, position=spot[0], refAllele=refAllele, allelesAtSite=list(searcher.allelesAtSite)
+                )
+            );
+
+        # Note: It seems ground-truth vcf has records outside of high-confidence regions
+        groundTruth = [item.data for item in truths[chromosome][start:stop] if checkIntersectionRecord(item.data, highconf[chromosome])];
+        sortedTruths = sorted(groundTruth, key=lambda x: x.position);
+
+        try:
+            logging.debug("Calculating truths %s, %s, %s, %d" % (str(candidateRecordsForTruthing), str(sortedTruths), segment, start));
+            flag, truthAlleles = AnnotateRegions.labelSites(
+                segment,
+                candidateRecordsForTruthing,
+                sortedTruths,
+                left=start,
+            );
+            logging.debug("Truths = %s" % (str(truthAlleles)));
+        except ValueError:
+            logging.info("Region %s: %d - %d is too long" % (chromosome, start, stop));
+            INTERNAL_TIME0 += (timer() - execStart);
+            return None;
+
+        if not flag:
+            candidateRecords = [
+                editRecord(r, {'gt': [-1, -1]}) for r in candidateRecords
+            ];
+        else:
+            # Mark the ground-truth alleles in each record
+            substituteRecords = [];
+
+            for r, t in zip(candidateRecords, truthAlleles):
+                gt = [findAlleleIndex(r, _) for _ in t];
+                assert(len(gt) >= 1), "At least one ground-truth allele should be found";
+                gt = gt * 2 if len(gt) == 1 else gt;
+                substituteRecords.append(
+                    editRecord(r, {'gt': gt})
+                );
+
+            candidateRecords = substituteRecords;
+
+    INTERNAL_TIME0 += (timer() - execStart);
+    return candidateRecords;
+
+
+def createTensors(records, searchers, maxAlleleLength=80, hotspotMethod="BOTH"):
+    """
+    Create tensors for a given site (generator)
+
+    :param records: list
+        List of records
+
+    :param searchers: list
+        List of searchers
+
+    :param maxAlleleLength: int
+        Maximum size of alleles to check
+
+    :param hotspotMethod: str
+        Method to detect alleles at hostpot locations
+    """
+    execStart = timer();
+    global TENSOR_TIME;
+
+    def allelesInRecord(record):
+        alleles_ = [record.ref] + record.alt;
+        return set(alleles_[gt] for gt in record.gt);
+
+    assert(len(searchers) <= 2), "Only one-two searchers accepted as of now"
+
+    for record in records:
+        start_ = record.position;
+        stop_ = start_ + len(record.ref);
+
+        for i, searcher in enumerate(searchers):
+            if (i > 0) and (hotspotMethod == "BAM1"):
+                searcher.clearAllelesForAssembly();
+                for allele in searchers[0].allelesAtSite:
+                    searcher.addAlleleForAssembly(allele);
+
+            logging.debug("Performing assembly with searcher %d" % i);
+            searcher.assemble(start_, stop_);
+
+        tensors = [];
+        labels = [];
+        alleles = [];
+        scores = [];
+        supportingReads = [];
+        supportingReadsStrict = [];
+        tensors2 = [];
+        supportingReads2 = [];
+        supportingReadsStrict2 = [];
+        truths = allelesInRecord(record);
+
+        for allele in [record.ref] + record.alt:
+            # If there is no support for allele, then we don't include any information regarding the allele
+            if not any(searcher.numReadsSupportingAlleleStrict(allele) > 0 for searcher in searchers):
+                logging.debug("Allele %s has no support from any searcher" % allele);
+                continue;
+
+            if len(allele) > maxAlleleLength:
+                logging.debug("Allele %s is too long" % allele);
+                continue;
+
+            searcher = searchers[0];
+            alleles.append(allele);
+            labels.append(1 if (allele in truths) else 0);
+
+            feature = searcher.computeFeatures(allele);
+            tensors.append(feature);
+            supportingReads.append(searcher.numReadsSupportingAllele(allele));
+            supportingReadsStrict.append(searcher.numReadsSupportingAlleleStrict(allele));
+
+            if len(searchers) > 1:
+                searcher2 = searchers[1];
+                feature2 = searcher2.computeFeatures(allele);
+                tensors2.append(feature2);
+                supportingReads2.append(searcher2.numReadsSupportingAllele(allele));
+                supportingReadsStrict2.append(searcher2.numReadsSupportingAlleleStrict(allele));
+
+        siteLabel = 0 if sum(labels) <= 1 else 1;
+        total = sum(labels);
+        labels = [i / total for i in labels];
+
+        TENSOR_TIME += (timer() - execStart);
+        yield {
+            'chromosome': record.chromosome,
+            'start': start_,
+            'stop': stop_,
+            'alleles': alleles,
+            'tensors': tensors,
+            'labels': labels,
+            'siteLabel': siteLabel,
+            'scores': scores,
+            'supportingReads': supportingReads,
+            'supportingReadsStrict': supportingReadsStrict,
+            'tensors2': tensors2,
+            'supportingReads2': supportingReads2,
+            'supportingReadsStrict2': supportingReadsStrict2,
+        };
+        execStart = timer();
+
+
+def data(
+    hotspots,
+    readSamplers,
+    searcherFactories,
+    reference,
+    vcf=None,
+    bed=None,
+    distance=PileupDataTools.MIN_DISTANCE,
+    maxAlleleLength=80,
+    hotspotMethod="BOTH",
+    searcherCollections=None,
+):
+    """
+    Generator for data for training/variant calling
+
+    :param hotspots: collections.defaultdict
+        Dictionary of hotspot regions
+
+    :param readSamplers: list
+        List of PileupDataTools.ReadSampler objects
+
+    :param searcherFactories: list
+        List of PileupDataTools.SearcherFactory objects
+
+    :param reference: str
+        Reference cache location
+
+    :param vcf: str
+        Ground-truth vcf if labeling is desired
+
+    :param bed: str
+        High-confidence bed file if vcf is provided
+
+    :param distance: int
+        Distance for clustering candidates
+
+    :param maxAlleleLength: int
+        Maximum size of an allele to be considered
+
+    :param hotspotMethod: str
+        Method to produce hotspots
+
+    :param searcherCollections: collections.defaultdict
+        Dictionary of intervaltree objects searchers constructed
+        to determine hotspot locations
+    """
+    execStart = timer();
+    global DATAGEN_TIME;
+
+    ref = ReferenceCache(database=reference);
+
+    if vcf is not None:
+        assert(bed is not None), "Provide high conf regions when vcf is provided";
+        bedRegions = bedReader(bed);
+        truthSet = groundTruthReader(vcf);
+    else:
+        bedRegions = None;
+        truthSet = None;
+
+    for chromosome in hotspots:
+        tree = hotspots[chromosome];
+        locations = sorted(tree.all_intervals);
+        clusters = clusterLocations(locations, distance, maxAlleleLength);
+        ref.chrom = chromosome;
+
+        for cluster in clusters:
+            # First, prepare AlleleSearcher instances for the cluster of hotspots
+            start = cluster[0][0] - distance // 2;
+            stop = cluster[-1][1] + distance // 2 - 1;
+            searchers = [];
+
+            for i, (R, S) in enumerate(zip(readSamplers, searcherFactories)):
+                foundSearcher = False;
+
+                if searcherCollections is not None:
+                    searcherCollection = searcherCollections[i];
+                    preconstructed = searcherCollection[chromosome][start: stop];
+
+                    for pre in preconstructed:
+                        if pre[0] <= start < stop <= pre[1]:
+                            logging.debug("Found pre-constructed searcher for span %d, %d" % (start, stop));
+                            searchers.append(pre[2]);
+                            foundSearcher = True;
+                            break;
+
+                if not foundSearcher:
+                    logging.debug("Constructing fresh searcher for span %d, %d" % (start, stop));
+                    searchers.append(
+                        S(
+                            R(chromosome, start, stop),
+                            start,
+                            stop,
+                        )
+                    );
+
+            # Create candidate vcf records for each hotspot and label them
+            candidates = getLabeledCandidates(
+                chromosome,
+                start,
+                stop,
+                ''.join(ref[start: stop]),
+                searchers,
+                cluster,
+                truthSet,
+                bedRegions,
+                hotspotMethod=hotspotMethod,
+                maxAlleleLength=maxAlleleLength,
+            );
+
+            # Region that has too many candidates
+            if candidates is None:
+                DATAGEN_TIME += (timer() - execStart);
+                yield {"type": "TOO_LONG", 'chromosome': chromosome, 'start': start, 'stop': stop};
+                execStart = timer();
+                continue;
+
+            # It is possible that none of the candidates survive when checked against high confidence regions
+            if len(candidates) == 0:
+                continue;
+
+            # Region that has mislabeled records
+            if -1 in candidates[0].gt:
+                DATAGEN_TIME += (timer() - execStart);
+                yield {"type": "MISSED", 'chromosome': chromosome, 'start': start, 'stop': stop};
+                execStart = timer();
+                continue;
+
+            # Generate tensors
+            for tensors in createTensors(candidates, searchers, maxAlleleLength, hotspotMethod=hotspotMethod):
+                DATAGEN_TIME += (timer() - execStart);
+                yield tensors;
+                execStart = timer();
