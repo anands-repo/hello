@@ -116,7 +116,11 @@ def collate_function(batch):
 
 
 def determineLength(filename):
-    return len(list(pickle.load(open(filename, 'rb')).locations));
+    try:
+        return len(list(pickle.load(open(filename, 'rb')).locations));
+    except Exception:
+        logging.error("Error in filename, %s" % filename);
+        raise Exception;
 
 
 def computeLabelOccurrence(memmapfile):
@@ -149,11 +153,12 @@ def pruneHomozygous(args):
 
 
 class DataLoaderLocal:
-    def __init__(self, memmaplist, batchSize=128, numWorkers=10, homSNVKeepRate=1):
+    def __init__(self, memmaplist, batchSize=128, numWorkers=10, homSNVKeepRate=1, maxReadsPerSite=0):
         self.memmaplist = memmaplist;
         random.shuffle(self.memmaplist);
         self.batchSize = batchSize;
         self.numWorkers = numWorkers;
+        self.maxReadsPerSite = maxReadsPerSite;
 
         # Determine length
         if numWorkers > 0:
@@ -228,7 +233,7 @@ class DataLoaderLocal:
 
     def __iter__(self):
         random.shuffle(self.memmaplist);
-        iterableData = MemmapDatasetLoader.IterableMemmapDataset(self.memmaplist);
+        iterableData = MemmapDatasetLoader.IterableMemmapDataset(self.memmaplist, maxReadsPerSite=self.maxReadsPerSite);
 
         # If we have subsampled sites, enforce the use of the subset rather than
         # the complete set of sites in the training set
@@ -268,6 +273,7 @@ def dataLoader(
     valData=None,
     loadIntoMem=False,
     homSNVKeepRate=1,
+    maxReadsPerSite=0,
 ):
     """
     Provide a data loader for training
@@ -315,28 +321,28 @@ def dataLoader(
     random.shuffle(memmaplist);
 
     if overfit:
-        tLoader = DataLoaderLocal(memmaplist, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate);
-        vLoader = DataLoaderLocal(memmaplist, batchSize=batchSize, numWorkers=numWorkers);
+        tLoader = DataLoaderLocal(memmaplist, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate, maxReadsPerSite=maxReadsPerSite);
+        vLoader = DataLoaderLocal(memmaplist, batchSize=batchSize, numWorkers=numWorkers, maxReadsPerSite=maxReadsPerSite);
     elif valData is None:
         tBound = int(len(memmaplist) * trainPct);
         tList = memmaplist[:tBound];
         vList = memmaplist[tBound:];
 
         tLoader = DataLoaderLocal(
-            tList, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate
+            tList, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate, maxReadsPerSite=maxReadsPerSite
         );
         vLoader = DataLoaderLocal(
-            vList, batchSize=batchSize, numWorkers=numWorkers
+            vList, batchSize=batchSize, numWorkers=numWorkers, maxReadsPerSite=maxReadsPerSite
         );
     else:
         logging.info("Using separate training and validation datasets");
         vList = [r.rstrip() for r in open(valData, 'r').readlines()];
         tList = memmaplist;
         tLoader = DataLoaderLocal(
-            tList, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate
+            tList, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate, maxReadsPerSite=maxReadsPerSite
         );
         vLoader = DataLoaderLocal(
-            vList, batchSize=batchSize, numWorkers=numWorkers
+            vList, batchSize=batchSize, numWorkers=numWorkers, maxReadsPerSite=maxReadsPerSite
         );
 
     logging.info("Compiled %d training examples and %d validation examples" % (len(tLoader) * batchSize, len(vLoader) * batchSize));
@@ -718,7 +724,15 @@ def train(
                         losses = losses_;
 
                     optim.zero_grad();
-                    losses.backward();
+
+                    try:
+                        losses.backward();
+                    except Exception:
+                        logging.error("Caught exception in backward");
+                        logging.error("Saving model parameters, and data that resulted in error, and exiting ... ");
+                        torch.save(searcher, os.path.abspath(outputPrefix + ".err.dnn"));
+                        torch.save(payload, os.path.abspath(outputPrefix + ".payload.pth"));
+                        sys.exit(0);
 
                     # if (logWriter is not None) and (i % 1000 == 0):
                     #     logging.info("Logging gradients with tensorboard");
@@ -1231,6 +1245,13 @@ if __name__ == "__main__":
         help="Weight for auxiliary loss function",
     );
 
+    parser.add_argument(
+        "--maxReadsPerSite",
+        help="Maximum number of reads to feed the DNN per site",
+        default=0,
+        type=int,
+    );
+
     args = parser.parse_args();
 
     logging.basicConfig(level=(logging.INFO if not args.debug else logging.DEBUG), format='%(asctime)-15s %(message)s');
@@ -1274,6 +1295,7 @@ if __name__ == "__main__":
         valData=args.valData,
         loadIntoMem=args.prefetch,
         homSNVKeepRate=args.homSNVKeepRate,
+        maxReadsPerSite=args.maxReadsPerSite,
     );
 
     def determineDecayRate(startRate, endRate, numSteps):

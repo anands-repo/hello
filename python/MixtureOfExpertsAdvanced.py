@@ -252,7 +252,11 @@ class MoEMergedAdvanced(torch.nn.Module):
 
         if hasattr(self, 'useAdditive') and self.useAdditive:
             if self.siteConvCombiner is None:
-                perSiteFrame2 = perSiteFrame0 + perSiteFrame1;
+                # perSiteFrame2 = perSiteFrame0 + perSiteFrame1;
+                # Note: This is conceptually better than the previous solution
+                # This makes all three experts use the same type of computations,
+                # A_j - \sum_{l != j} A_l, to produce input feature maps
+                perSiteFrame2 = self.preparePerSiteFrames(alleleLevelConv2, numAllelesPerSite);
             else:
                 perSiteFrame2 = self.siteConvCombiner(
                     perSiteFrame0, perSiteFrame1,
@@ -407,7 +411,13 @@ def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
 
     if 'convCombiner' in configDict:
         alleleConvCombiner = ConvCombiner(importlib.import_module(configDict['convCombiner']).config);
-        siteConvCombiner = ConvCombiner(importlib.import_module(configDict['convCombiner']).config);
+
+        # New code to force useAdditive only on alleleLevelCombiner; 2020/02/12
+        if ('noSiteLevelCombiner' in configDict) and configDict['noSiteLevelCombiner']:
+            siteConvCombiner = None;
+        else:
+            siteConvCombiner = ConvCombiner(importlib.import_module(configDict['convCombiner']).config);
+        # 2020/02/12 over
     else:
         alleleConvCombiner = None;
         siteConvCombiner = None;

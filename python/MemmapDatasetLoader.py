@@ -7,13 +7,40 @@ import copy
 import random
 import logging
 from functools import reduce
+import collections
+import numpy as np
 
 
-def tensorify(siteData):
+def subsample(siteData, maxNumReads, tensorKey, tensorNumKey):
+    allelesOfImport = [a for a in siteData if siteData[a][tensorNumKey][0] > 0];
+    readIds = [(a, i) for a in allelesOfImport for i in range(siteData[a][tensorNumKey][0])];
+    subsampledIds = random.sample(readIds, maxNumReads);
+    readsToSubsample = collections.defaultdict(list);
+
+    for key, id_ in subsampledIds:
+        readsToSubsample[key].append(id_);
+
+    for key in allelesOfImport:
+        reads = readsToSubsample[key];
+        siteData[key][tensorNumKey][0] = len(reads);
+
+        if len(reads) == 0:
+            siteData[key][tensorKey] = np.zeros_like(siteData[key][tensorKey])[0: 1];
+        else:
+            siteData[key][tensorKey] = siteData[key][tensorKey][reads];
+    
+
+def tensorify(siteData, maxNumReads=0):
     alleles = [a for a in siteData if a != 'siteLabel'];
     tensors0 = [];
     tensors1 = [];
     labels = [];
+
+    if (maxNumReads > 0) and (sum(siteData[a]['supportingReadsStrict'][0] for a in alleles) > maxNumReads):
+        subsample(siteData, maxNumReads, 'feature', 'supportingReadsStrict');
+
+    if (maxNumReads > 0) and (sum(siteData[a]['supportingReadsStrict2'][0] for a in alleles) > maxNumReads):
+        subsample(siteData, maxNumReads, 'feature2', 'supportingReadsStrict2');
 
     for a in alleles:
         tensors0.append(
@@ -54,6 +81,12 @@ class IterableMemmapDataset(torch.utils.data.IterableDataset):
             self.testmode = True;
         else:
             self.testmode = False;
+
+        # If there is a max reads restriction, enforce it
+        if 'maxReadsPerSite' in kwargs:
+            self.maxReadsPerSite = kwargs['maxReadsPerSite'];
+        else:
+            self.maxReadsPerSite = 0;
 
         self.tensorify = True;
 
@@ -132,7 +165,7 @@ class IterableMemmapDataset(torch.utils.data.IterableDataset):
         data = self._fileObject[nextLocation];
 
         if self.tensorify:
-            return tensorify(data);
+            return tensorify(data, self.maxReadsPerSite);
 
         return data;
 

@@ -30,6 +30,14 @@ def reduceFrames(frames):
     );
 
 
+def cappedLog(tensor):
+    return torch.log(
+        torch.where(tensor > 0),
+        tensor,
+        torch.zeros_like(tensor) + 1e-10
+    );
+
+
 class ConditionalNetwork(AlleleSearcherDNN.Network):
     def __init__(self, config, offset=0):
         super().__init__(config);
@@ -620,10 +628,10 @@ def getExpertLogProb(predictions, targets):
         expert's predictions (outputs)
     """
     results = torch.sum(
-        torch.log(
+        cappedLog(
             torch.where(
                 targets > 0, predictions, 1 - predictions
-            ) + 1e-10
+            )
         )
     );
     return results;
@@ -644,7 +652,7 @@ def perSiteLogProb(expertLogProbs, metaExpertPredictions):
         Singleton torch tensor which provides the log prob
         for a given expert for a given target
     """
-    metaExpertLogProb = torch.log(metaExpertPredictions + 1e-10);
+    metaExpertLogProb = cappedLog(metaExpertPredictions);
     # Joint (expert, switch)
     summed = metaExpertLogProb + expertLogProbs;
     # Sum over switch values/meta-expert values
@@ -729,7 +737,7 @@ class MoELoss(torch.nn.Module):
 
         # Compute entropy
         metaEntropy = -torch.sum(
-            metaExpertPredictions * torch.log(metaExpertPredictions + 1e-10)
+            metaExpertPredictions * cappedLog(metaExpertPredictions)
         ) * self.regularizer;
         self.regularizer = self.regularizer * self.decay;
 
@@ -777,7 +785,7 @@ class MoELoss(torch.nn.Module):
 
         expertProbs = targets * expertPredictions + (1 - targets) * (1 - expertPredictions);
         totalLoss = torch.sum(
-            posterior * (torch.log(expertProbs + 1e-10) + torch.log(metaExpertPredictions + 1e-10)) * targetWeights
+            posterior * (cappedLog(expertProbs) + cappedLog(metaExpertPredictions)) * targetWeights
         );
 
         # We want to maximize likelihood, but also entropy
@@ -786,7 +794,7 @@ class MoELoss(torch.nn.Module):
 
         if self.provideIndividualLoss:
             individualLoss = torch.sum(
-                torch.log(expertProbs + 1e-10),
+                cappedLog(expertProbs),
                 dim=0
             );
 
@@ -811,7 +819,7 @@ class PredictionLoss(MoELoss):
 
         expertProbs = targets * expertPredictions + (1 - targets) * (1 - expertPredictions);
         systemProbs = torch.sum(expertProbs * metaExpertPredictions, dim=1);
-        totalLoss = torch.sum(torch.log(systemProbs + 1e-10));
+        totalLoss = torch.sum(cappedLog(systemProbs));
 
         return -totalLoss;
 
