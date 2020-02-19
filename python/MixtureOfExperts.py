@@ -32,9 +32,10 @@ def reduceFrames(frames):
 
 def cappedLog(tensor):
     return torch.log(
-        torch.where(tensor > 0),
-        tensor,
-        torch.zeros_like(tensor) + 1e-10
+        torch.where(tensor > 0,
+            tensor,
+            torch.zeros_like(tensor) + 1e-10,
+        )
     );
 
 
