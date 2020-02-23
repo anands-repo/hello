@@ -31,10 +31,15 @@ def reduceFrames(frames):
 
 
 def cappedLog(tensor):
+    cushionedTensor = tensor + 1e-10;
+
+    # Make sure that cushioning for log is not applied for
+    # large values. Otherwise log may go positive, and cause
+    # problems in loss.backward() calls
     return torch.log(
-        torch.where(tensor > 0,
+        torch.where(cushionedTensor > 1 - 1e-10,
             tensor,
-            torch.zeros_like(tensor) + 1e-10,
+            cushionedTensor,
         )
     );
 
