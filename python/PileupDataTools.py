@@ -70,7 +70,7 @@ class SearcherFactory:
             Stop co-ordinates
         """
         return AlleleSearcherLite(
-            container=container[0] if ((type(container) is list) and (len(container) == 0)) else container,
+            container=container[0] if ((type(container) is list) and (len(container) == 1)) else container,
             start=start,
             stop=stop,
             ref=self.ref,
