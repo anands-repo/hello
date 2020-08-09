@@ -29,7 +29,7 @@ except Exception:
 
 
 class SearcherFactory:
-    def __init__(self, ref, featureLength, pacbio, useInternalLeftAlignment, useSimple=False, noAlleleLevelFilter=False, clr=False):
+    def __init__(self, ref, featureLength, pacbio, useInternalLeftAlignment, noAlleleLevelFilter=False, clr=False):
         """
         Factory object for creating a specific type of allele searcher again and again
 
@@ -40,13 +40,10 @@ class SearcherFactory:
             Length of feature map desired
 
         :param pacbio: bool
-            Are we dealing with PacBio reads?
+            Are we dealing with PacBio reads (for single read mode)?
 
         :param useInternalLeftAlignment: bool
             Whether we should use internal left-alignment
-
-        :param useSimple: bool
-            Use simple feature map (indels are single-base events)
 
         :param noAlleleLevelFilter: bool
             No allele level filter to be used
@@ -57,22 +54,14 @@ class SearcherFactory:
         self.featureLength = featureLength;
         self.pacbio = pacbio;
         self.useInternalLeftAlignment = useInternalLeftAlignment;
-        self.useSimple = useSimple;
         self.noAlleleLevelFilter = noAlleleLevelFilter or (clr and pacbio);
         self.clr = clr;
-
-        # DEPRECATED. Pysam.FastaFile is much faster
-        # Setup a reference cache for each chromosome
-        # This allows the caching functionality of ReferenceCache
-        # Otherwise each time a searcher is created, files would be
-        # read from the disk
-        # self.refDict = dict();
         self.ref = ReferenceCache(database=ref);
 
     def __call__(self, container, start, stop):
         """
-        :param container: PileupContainerLite
-            Container object
+        :param container: list/PileupContainerLite
+            Container object or list of container objects for hybrid mode
 
         :param start: int
             Start co-ordinates
@@ -81,15 +70,13 @@ class SearcherFactory:
             Stop co-ordinates
         """
         return AlleleSearcherLite(
-            container=container,
+            container=container[0] if ((type(container) is list) and (len(container) == 0)) else container,
             start=start,
             stop=stop,
             ref=self.ref,
             featureLength=self.featureLength,
             pacbio=self.pacbio,
-            useColored=True,
             useInternalLeftAlignment=self.useInternalLeftAlignment,
-            useColoredSimple=self.useSimple,
             noAlleleLevelFilter=self.noAlleleLevelFilter,
         );
 
@@ -269,7 +256,7 @@ def obtainConsensusRegions(searchers):
 @profile
 def candidateReader(
     readSamplers,
-    searcherFactories,
+    searcherFactory,
     activity,
     distance=MIN_DISTANCE,
     hotspotMode="BOTH",
@@ -281,8 +268,8 @@ def candidateReader(
     :param readSamplers: list
         ReadSampler objects for obtaining reads
 
-    :param searcherFactories: list
-        List of SearcherFactory objects
+    :param searcherFactory: SearcherFactory
+        SearcherFactory object
 
     :param activity: str
         Filename for active regions
@@ -306,39 +293,38 @@ def candidateReader(
     searcherCollection = None;
 
     if provideSearchers:
-        searcherCollection = [
-            collections.defaultdict(intervaltree.IntervalTree) for i in searcherFactories
-        ];
+        searcherCollection = collections.defaultdict(intervaltree.IntervalTree);
 
     for i, item in enumerate(hotspotIterator):
         chromosome, start, stop = item['chromosome'], item['start'], item['stop'];
         searchers = [];
 
         try:
-            for j, (readSampler, factory) in enumerate(zip(readSamplers, searcherFactories)):
-                container = readSampler(
-                    chromosome,
-                    max(0, start - FLANKING_BASES),
-                    stop + FLANKING_BASES,
-                );
-                searchers.append(factory(container, start, stop));
-                logging.debug("Constructed searcher for span %d, %d" % (start, stop));
-                if provideSearchers:
-                    searcherCollection[j][chromosome].addi(
-                        start,
-                        stop,
-                        searchers[-1],
-                    );
+            containers = [
+                rS(chromosome, max(0, start - FLANKING_BASES), stop + FLANKING_BASES)
+                for rS in readSamplers
+            ];
+            searcher = searcherFactory(containers, start, stop)
+
+            logging.debug("Constructed searcher for span %d, %d" % (start, stop));
+
+            if provideSearchers:
+                searcherCollection[chromosome].addi(start, stop, searcher);
         except LocationOutOfBounds:
             logging.warning("Location %s, %d, %d is out of bounds" % (chromosome, start, stop));
             continue;
 
-        if (len(searchers) == 1) or (hotspotMode == "BAM1"):
-            differingRegions = searchers[0].differingRegions;
-            for x, y in differingRegions:
-                hotspots[chromosome].addi(x, y, None);
-        else:
-            hotspots[chromosome].update(obtainConsensusRegions(searchers));
+        differingRegions = searcher.differingRegions;
+        for x, y in differingRegions:
+            hotspots[chromosome].addi(x, y, None);
+
+        # NOTE: With the merged AlleleSearcher model, there is no need to obtain a consensus anymore
+        # if not searcher.hybrid:
+        #     differingRegions = searcher.differingRegions;
+        #     for x, y in differingRegions:
+        #         hotspots[chromosome].addi(x, y, None);
+        # else:
+        #     hotspots[chromosome].update(obtainConsensusRegions(searchers));
 
         if (i + 1) % 100 == 0:
             logging.info("Completed %d hotspot items" % (i + 1));

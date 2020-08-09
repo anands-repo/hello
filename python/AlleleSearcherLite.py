@@ -1,5 +1,5 @@
 import libCallability
-from ReferenceCache import ReferenceCache
+from PySamFastaWrapper import PySamFastaWrapper as ReferenceCache
 import logging
 import numpy as np
 
@@ -26,22 +26,15 @@ class AlleleSearcherLite:
         start,
         stop,
         ref,
-        featureLength=100,
+        featureLength=150,
         pacbio=False,
         strict=True,
-        indelRealigned=False,
         useInternalLeftAlignment=False,
-        useAdvanced=False,
-        useColored=False,
-        useMapQ=False,
-        useOrientation=False,
-        useQEncoding=False,
-        useColoredSimple=False,
         noAlleleLevelFilter=False,
     ):
         """
-        :param container: PileupContainer/PileupContainerLite
-            Container for reads from which to create wrapper
+        :param container: list/PileupContainerLite
+            List of pileupcontainer objects or a single pileupcontainer object
 
         :param start: int
             Left limiting position of interest
@@ -56,112 +49,94 @@ class AlleleSearcherLite:
             Length of feature map
 
         :param pacbio: bool
-            Whether we are talking pacbio reads or not
+            Indicate that the reads are for PacBio if we are only using one container
 
         :param strict: bool
             Whether a differingRegion should strictly fall with start and stop
 
-        :param indelRealigned: bool
-            Whether input reads have been indel realigned
-
         :param useInternalLeftAlignment: bool
             Enable use of C++-based cigar left-alignment
-
-        :param useAdvanced: bool
-            Use advanced feature map
-
-        :param useColored: bool
-            Use colored feature maps
-
-        :param useMapQ: bool
-            Whether we want to use MapQ encoded into DNN feature maps
-
-        :param useOrientation: bool
-            Whether we want to use orientation of reads in the input feature maps
-
-        :param useQEncoding: bool
-            Encode quality scores (MAPQ and Q) as Q-scores, not probabilities
-
-        :param useColoredSimple: bool
-            Use colored feature maps but indels are squashed into single bases
 
         :param noAlleleLevelFilter: bool
             Do not use allele-level filters
         """
-        self.container = container;
         self.start = start;
         self.stop = stop;
         self.strict = strict;
-        self.indelRealigned = indelRealigned;
         self.featureLength = featureLength;
-        self.useAdvanced = useAdvanced;
-        self.useMapQ = useMapQ;
-        self.useOrientation = useOrientation;
-        self.useQEncoding = useQEncoding;
-        self.useColored = useColored;
-        self.useColoredSimple = useColoredSimple;
         self.noAlleleLevelFilter = noAlleleLevelFilter;
-        self.pacbio = pacbio;
+        containers = container if (type(container) is list) else [container];
 
-        if len(self.container.pileupreads) != 0:
-            # Convert cigartuples, and alignedPairs to list format
-            cigartuples = [[list(x) for x in cigartuple] for cigartuple in self.container.cigartuples];
+        # Arguments for C++ searcher
+        reads = [];
+        names = [];
+        qualities = [];
+        refStarts = [];
+        references = [];
+        mapq = [];
+        orientation = [];
+        pacbio = [];
+        cigartuples = [];
+        self.noReads = [False for i in containers];
+        self.pacbio = (len(containers) == 1) and pacbio;
+        self.hybrid = len(containers) > 1;
 
-            if type(ref) is str:
-                self.ref = ReferenceCache(database=ref, chrom=self.container.chromosome);
+        for i, container_ in enumerate(containers):
+            if len(container_.pileupreads) != 0:
+                cigartuples += [[list(x) for x in cigartuple] for cigartuple in container_.cigartuples];
+                reads += [p.alignment.query_sequence for p in container_.pileupreads];
+                names += [p.alignment.query_name for p in container_.pileupreads];
+                qualities += [p.alignment.query_qualities for p in container_.pileupreads];
+                refStarts += [p.alignment.reference_start for p in container_.pileupreads];
+                mapq += [p.alignment.mapping_quality for p in container_.pileupreads];
+                orientation += [-1 if p.alignment.is_reverse else 1 for p in container_.pileupreads];
             else:
-                self.ref = ref;
+                self.noReads[i] = True;
 
-                # Setting chromosome in reference cache
-                # incurs computations downstream
-                if self.ref.chrom != container.chromosome:
-                    self.ref.chrom = container.chromosome;
-
-            def noneToMinus1(x):
-                return -1 if x is None else x;
-
-            # Check whether we are within acceptable bounds
-            if min(self.container.referenceStart, start) - 10 < 0:
-                raise LocationOutOfBounds;
-
-            if max(self.container.referenceEnd, stop) + 10 > len(self.ref):
-                raise LocationOutOfBounds;
-
-            # Remaining arguments
-            windowStart = min(self.container.referenceStart, start) - 10;
-            reads = [p.alignment.query_sequence for p in self.container.pileupreads];
-            names = [p.alignment.query_name for p in self.container.pileupreads];
-            qualities = [p.alignment.query_qualities for p in self.container.pileupreads];
-            refStarts = [p.alignment.reference_start for p in self.container.pileupreads];
-            reference = ''.join(self.ref[windowStart: max(stop, self.container.referenceEnd) + 10]);  # Provide a wide berth
-            mapq = [p.alignment.mapping_quality for p in self.container.pileupreads];
-            orientation = [-1 if p.alignment.is_reverse else 1 for p in self.container.pileupreads];
-
-            self.searcher = libCallability.AlleleSearcherLite(
-                reads,
-                names,
-                qualities,
-                cigartuples,
-                refStarts,
-                mapq,
-                orientation,
-                reference,
-                windowStart,
-                10,
-                useInternalLeftAlignment,
-                useMapQ,
-                useOrientation,
-                useQEncoding
-            );
-
-            self.searcher.mismatchScore = 1;
-            self.searcher.insertScore = 4 if not pacbio else 1;
-            self.searcher.deleteScore = 4 if not pacbio else 1;
-            # self.searcher.scoreLocations();
-            # self.searcher.determineDifferingRegions();
-            self.noReads = False;
+        if type(ref) is str:
+            self.ref = ReferenceCache(database=ref, chrom=containers[0].chromosome);
         else:
-            self.noReads = True;
+            self.ref = ref;
+            self.ref.chrom = containers[0].chromosome;
+
+        windowStart = min(refStarts + [start]) - 10;
+        windowEnd = -float('inf');  # max([container_.referenceEnd for container_ in containers]) + 10;
+
+        for c in containers:
+            if len(c.pileupreads) > 0:
+                windowEnd = max(windowEnd, c.referenceEnd);
+
+        if windowStart < 0:
+            raise LocationOutOfBounds;
+
+        if windowEnd > len(self.ref):
+            raise LocationOutOfBounds;
+
+        if windowEnd < 0:
+            raise LocationOutOfBounds;
+
+        windowEnd += 10;
+        reference = ''.join(self.ref[windowStart: windowEnd]);
+
+        if len(containers) == 1:
+            pacbio = [pacbio for i in reads] 
+        else:
+            pacbio = [False for i in containers[0].pileupreads] + [True for i in containers[1].pileupreads];
+
+        self.searcher = libCallability.AlleleSearcherLite(
+            reads,
+            names,
+            qualities,
+            cigartuples,
+            refStarts,
+            mapq,
+            orientation,
+            pacbio,
+            reference,
+            windowStart,
+            10,
+            useInternalLeftAlignment
+        );
 
     @property
     def refAllele(self):
@@ -169,7 +144,7 @@ class AlleleSearcherLite:
 
     @property
     def differingRegions(self):
-        if self.noReads:
+        if all(self.noReads):
             return [];
 
         if hasattr(self, 'regions'):
@@ -178,6 +153,7 @@ class AlleleSearcherLite:
         self.searcher.determineDifferingRegions();
 
         self.regions = [];
+
         for item in self.searcher.differingRegions:
             logging.debug("Received differing region %s" % (str((item.first, item.second))));
             if self.strict:
@@ -194,80 +170,47 @@ class AlleleSearcherLite:
         return self.regions;
 
     @property
-    def mismatchScore(self):
-        return self.searcher.mismatchScore;
-
-    @mismatchScore.setter
-    def mismatchScore(self, _score):
-        self.searcher.mismatchScore = _score;
-
-    @property
-    def insertScore(self):
-        return self.searcher.insertScore;
-
-    @insertScore.setter
-    def insertScore(self, _score):
-        self.searcher.insertScore = _score;
-
-    @property
-    def deleteScore(self):
-        return self.searcher.deleteScore;
-
-    @deleteScore.setter
-    def deleteScore(self, _score):
-        self.searcher.deleteScore = _score;
-
-    @property
     def allelesAtSite(self):
         alleles = set();
-        if self.noReads:
+
+        if all(self.noReads):
             return alleles;
+
         for item in self.searcher.allelesAtSite:
             alleles.add(item);
+
         return alleles;
 
     def addAlleleForAssembly(self, allele):
         """
         Set an allele for assembly. When alleles are set, assembly uses
-        only the set alleles
+        only the set alleles.
 
         :param allele: str
             Allele to be used for assembly
         """
-        if not self.noReads:
+        if not all(self.noReads):
             self.searcher.addAlleleForAssembly(allele);
 
     @profile
-    def computeFeatures(self, allele, *args):
+    def computeFeatures(self, allele, index=0):
         """
         Computes features for a given allele
 
         :param allele: str
             Allele for which features are to be computed
 
+        :param index: int
+            The read set for which features are to be released
+
         :return: np.ndarray
             Feature using numpy
         """
-        if self.useColoredSimple:
-            if self.noReads:
-                return np.zeros(shape=(1, self.featureLength, 6), dtype=np.uint8);
-            else:
-                return self.searcher.computeFeaturesColoredSimple(allele, self.featureLength);
-        elif (not self.useAdvanced) and (not self.useColored):
-            if self.noReads:
-                return np.zeros(shape=(self.featureLength, 8));
-            else:
-                return self.searcher.computeFeatures(allele, self.featureLength);
-        elif self.useColored:
-            if self.noReads:
-                return np.zeros(shape=(1, self.featureLength, 6), dtype=np.uint8);
-            else:
-                return self.searcher.computeFeaturesColored(allele, self.featureLength);
+        if self.noReads[index if self.hybrid else 0]:
+            return np.zeros(shape=(1, self.featureLength, 6), dtype=np.uint8);
         else:
-            if self.noReads:
-                return np.zeros(shape=(1, self.featureLength, 18));
-            else:
-                return self.searcher.computeFeaturesAdvanced(allele, self.featureLength);
+            index = index == 1 if self.hybrid else self.pacbio;
+            return self.searcher.computeFeaturesColoredSimple(allele, self.featureLength, index);
 
     def coverage(self, position):
         """
@@ -296,7 +239,7 @@ class AlleleSearcherLite:
         :return: iterable
             List-like object
         """
-        if self.noReads:
+        if all(self.noReads):
             return [];
 
         if start is None:
@@ -310,29 +253,24 @@ class AlleleSearcherLite:
         else:
             return self.searcher.assemble(start, stop, False);
 
-    def numReadsSupportingAllele(self, allele):
-        """
-        Provides the number of reads supporting each allele
-
-        :param allele: str
-            Allele for which the number of supporting reads is desired
-        """
-        if self.noReads:
-            return 0;
-
-        return self.searcher.numReadsSupportingAllele(allele);
-
-    def numReadsSupportingAlleleStrict(self, allele):
+    def numReadsSupportingAlleleStrict(self, allele, index):
         """
         Provides the number of reads fully encapsulating an allele
 
         :param allele: str
             Allele for which the number of supporting reads is desired
+
+        :param index: int
+            Read set for which query is being made
+
+        :return: int
+            Number of reads supporting the given allele
         """
-        if self.noReads:
+        if self.noReads[index if self.hybrid else 0]:
             return 0;
 
-        return self.searcher.numReadsSupportingAlleleStrict(allele);
+        index = index == 1 if self.hybrid else self.pacbio;
+        return self.searcher.numReadsSupportingAlleleStrict(allele, index);
 
     def determineAllelesInRegion(self, start, stop):
         """
@@ -347,35 +285,15 @@ class AlleleSearcherLite:
         :return: list
             List of alleles from reads
         """
-        if self.noReads:
+        if all(self.noReads):
             return [];
         else:
             return list(self.searcher.determineAllelesAtSite(start, stop));
-
-    def expandRegion(self, start, stop):
-        """
-        Expand a region to adjacent indels
-        """
-        if self.noReads:
-            return (start, stop);
-
-        logging.debug("Number of reads at site = %d" % len(self.container.pileupreads));
-        region = self.searcher.expandRegion(start, stop);
-        return int(region.first), int(region.second);
 
     def clearAllelesForAssembly(self):
         """
         Clears preset alleles for assembly
         """
-        if not self.noReads:
+        if not all(self.noReads):
             self.searcher.clearAllelesForAssembly();
 
-    def __str__(self):
-        string = "Chromosome %s, start %d, stop %d, type %s, number of reads %d" %(
-            self.container.chromosome,
-            self.start,
-            self.stop,
-            'pacbio' if self.pacbio else 'illumina',
-            len(self.container.pileupreads),
-        );
-        return string;

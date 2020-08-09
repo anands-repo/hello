@@ -579,7 +579,6 @@ if __name__ == "__main__":
             "When provided, the length of chr prefixes should be the same as that of the bam files";
 
     readSamplers = [];
-    searcherFactories = [];
 
     for i, (bam, chrPrefix) in enumerate(zip(bamfiles, chrPrefixes)):
         reader = PileupDataTools.ReadSampler(
@@ -590,23 +589,21 @@ if __name__ == "__main__":
         );
         readSamplers.append(reader);
 
-        searcherFactory = PileupDataTools.SearcherFactory(
-            ref=args.ref,
-            featureLength=args.featureLength,
-            pacbio=(i > 0),
-            useInternalLeftAlignment=False,
-            useSimple=args.simple,
-            noAlleleLevelFilter=args.noAlleleLevelFilter,
-            clr=(i > 0) and args.clr,
-        );
-        searcherFactories.append(searcherFactory);
+    searcherFactory = PileupDataTools.SearcherFactory(
+        ref=args.ref,
+        featureLength=args.featureLength,
+        pacbio=False,   # TBD: Currently only supports hybrid mode
+        useInternalLeftAlignment=False,
+        noAlleleLevelFilter=args.noAlleleLevelFilter,
+        clr=False,      # TBD: Currently doesn't support CLR reads
+    );
 
     logging.info("Getting callable sites");
 
     # Obtain the list of hotspots to be called
-    hotspots, searcherCollections = PileupDataTools.candidateReader(
+    hotspots, searcherCollection = PileupDataTools.candidateReader(
         readSamplers=readSamplers,
-        searcherFactories=searcherFactories,
+        searcherFactory=searcherFactory,
         activity=args.activity,
         hotspotMode=args.hotspotMode,
         provideSearchers=args.reuseSearchers,
@@ -618,12 +615,12 @@ if __name__ == "__main__":
     datagen = trainDataTools.data(
         hotspots,
         readSamplers,
-        searcherFactories,
+        searcherFactory,
         args.ref,
         vcf=args.truth,
         bed=args.highconf,
         hotspotMethod=args.hotspotMode,
-        searcherCollections=searcherCollections,
+        searcherCollection=searcherCollection,
     );
 
     featureList = None;

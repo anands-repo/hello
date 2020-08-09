@@ -40,6 +40,10 @@ void AlleleCounts::resolvePartials()
     ) {
         const string& altAllele = altAlleleKey.second;
 
+        // Note altAllele.first is simply going to be a
+        // single reference base since partial alleles simply apply to
+        // insertions
+
         for (auto& item: counts) {
             const string& fullAltAllele = item.first.second;
             string slice;
@@ -49,8 +53,12 @@ void AlleleCounts::resolvePartials()
             }
 
             if (left) {
+                // Left partial implies the left "half" of the allele is not known. Hence, we
+                // compare the partial alt allele to the right "half" of the full alt allele
                 slice = fullAltAllele.substr(fullAltAllele.size() - altAllele.size(), altAllele.size());
             } else {
+                // Right partial implies the right "half" of the allele is not known. Hence, we
+                // compare the partial alt allele to the left "half" of the full alt allele
                 slice = fullAltAllele.substr(0, altAllele.size());
             }
 
@@ -101,19 +109,6 @@ void AlleleCounts::resolvePartials()
     }
     resolvePartialMatches(this->altCounts, partialMatches, this->rightPartialAltCounts);
     this->rightPartialAltCounts.clear();
-
-    // Determine total count
-    this->total = this->refCount;
-
-    for (auto& item: this->altCounts) {
-        this->total += item.second;
-    }
-}
-
-void PositionLite::cutoffFn()
-{
-    float cutoff = ((this->coverage < LOWCOV_CUTOFF) ? LOWCOV_FRACTION : HIGHCOV_FRACTION) * (float) this->coverage;
-    this->marked = ((this->score >= cutoff) & (this->coverage > 0));
 }
 
 // Add a single base and single quality to a specific track
@@ -171,7 +166,8 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
             long rdlength,
             size_t threshold,
             bool partial = false,
-            bool leftPartial = false
+            bool leftPartial = false,
+            int increment = 1
         ) {
             pair<string, string> allele(refAllele, altAllele);
 
@@ -182,9 +178,9 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                 auto& altCounts = partial ? 
                     (leftPartial ? count.leftPartialAltCounts : count.rightPartialAltCounts) : count.altCounts;
                 if (altCounts.find(allele) != altCounts.end()) {
-                    altCounts[allele] += 1;
+                    altCounts[allele] += increment;
                 } else {
-                    altCounts[allele] = 1;
+                    altCounts[allele] = increment;
                 }
             }
         };
@@ -215,6 +211,16 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                         } else {
                             count.refCount += 1;
                         }
+
+                        count.total += 1;   // We use a second set of counts to track totals. This is because,
+                                            // indel counts for Illumina are 2x that of PacBio. Hence using refCount
+                                            // and altCount to determine totals is incorrect, since some altCounts do not reflect
+                                            // the actual coverage at a site. Also, the total number of bases aligning to a position
+                                            // are determined by the number of match/mismatch bases and it is not dependent on the insertion/deletion
+                                            // bases at a site. This is because indels are impinged upon the position to the left of the indel cigar, and
+                                            // that position already has a count for the base since that position has a cigar value.
+                                            // The only exception to this rule is when there is a left partial indel at a position, in which case also
+                                            // we increment the count. Note that left partials can occur due to indel realignment.
                     }
 
                     rdcounter += length;
@@ -229,7 +235,16 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                     string refAllele = this->reference.substr(rfcounter - 1, length + 1);
                     string readAllele = rdcounter > 0 ? read.substr(rdcounter - 1, 1) : this->reference.substr(rfcounter - 1, 1);
                     addToCount(
-                        count, refAllele, readAllele, qual, rdcounter - 1, 1, this->qThreshold
+                        count,
+                        refAllele,
+                        readAllele,
+                        qual,
+                        rdcounter - 1,
+                        1,
+                        this->qThreshold,
+                        false,
+                        false,
+                        this->pacbio[i] ? 1: 2
                     );
                 }
                 case BAM_CREF_SKIP:
@@ -254,8 +269,13 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                             length,
                             this->qThreshold,
                             true,
-                            true
+                            true,
+                            this->pacbio[i] ? 1: 2
                         );
+
+                        // Left partial indel: we must increase count.total for this case
+                        // See the match/mismatch case statement for more explanations
+                        count.total += 1;
                     } else if ((cigarcount == cigartuple.size() - 1) && (rdcounter > 0)) {
                         string readAllele = read.substr(rdcounter - 1, length + 1);
                         addToCount(
@@ -267,7 +287,8 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                             length + 1,
                             this->qThreshold,
                             true,
-                            false
+                            false,
+                            this->pacbio[i] ? 1: 2
                         );
                     } else {
                         string readAllele;
@@ -278,7 +299,18 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                         } else {
                             readAllele = refAllele + read.substr(rdcounter, length);
                         }
-                        addToCount(count, refAllele, readAllele, qual, rdc, len, this->qThreshold);
+                        addToCount(
+                            count,
+                            refAllele,
+                            readAllele,
+                            qual,
+                            rdc,
+                            len,
+                            this->qThreshold,
+                            false,
+                            false,
+                            this->pacbio[i] ? 1: 2
+                        );
                     }
                 }
                 case BAM_CSOFT_CLIP:
@@ -387,15 +419,14 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     const p::list& referenceStarts,
     const p::list& mapq,
     const p::list& orientation,
+    const p::list& pacbio,
     const string& reference,
     size_t windowStart,
     size_t qThreshold,
-    bool leftAlign,
-    bool useMapq,
-    bool useOrientation,
-    bool useQEncoding
+    bool leftAlign
 ) :
     reads(strListToVector(reads)),
+    pacbio(LIST_TO_BOOL_VECTOR(pacbio)),
     names(strListToVector(names)),
     reference(reference),
     referenceStarts(LIST_TO_SIZET_VECTOR(referenceStarts)),
@@ -406,9 +437,9 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     deleteScore(4),
     windowStart(windowStart),
     qThreshold(qThreshold),
-    useMapq(useMapq),
-    useOrientation(useOrientation),
-    useQEncoding(useQEncoding),
+    useMapq(true),
+    useOrientation(true),
+    useQEncoding(true),
     base_color_offset_a_and_g(40),
     base_color_offset_t_and_c(30),
     base_color_stride(70),
@@ -425,7 +456,7 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     READ_ORIENTATION_TRACK(4),
     POSITION_MARKER_TRACK(5),
     snvThreshold(0.12),
-    indelThreshold(0.06),
+    indelThreshold(0.12),
     minCount(2),
     minMapQ(10),
     maxAlleleSize(100)
@@ -469,9 +500,10 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
         this->counts.emplace_back(move(count));
     }
 
-    // Update all allele counts and resolve partial counts
+    // Update all allele counts
     this->updateAlleleCounts();
 
+    // Resolve partial counts
     for (auto& count : this->counts) {
         count.resolvePartials();
     }
@@ -1246,10 +1278,15 @@ size_t AlleleSearcherLiteFiltered::numReadsSupportingAllele(const string& allele
     return num;
 }
 
-size_t AlleleSearcherLiteFiltered::numReadsSupportingAlleleStrict(const string& allele)
+size_t AlleleSearcherLiteFiltered::numReadsSupportingAlleleStrict(const string& allele, bool pacbio_)
 {
     size_t num = 0;
-    if (this->supports.find(allele) != this->supports.end()) num += this->supports.find(allele)->second.size();
+    if (this->supports.find(allele) != this->supports.end()) {
+        for (auto& item: this->supports[allele]) {
+            size_t readId = item.first;
+            if (!(pacbio_ ^ this->pacbio[readId])) num ++;
+        }
+    }
     return num;
 }
 
@@ -1498,13 +1535,9 @@ int AlleleSearcherLiteFiltered::PositionColor(size_t position)
 
 // Computes colored feature-maps with indels colored in at a single position
 // This follows the DeepVariant method
-np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const string& allele, size_t featureLength) {
-    size_t numSupports = 0;
+np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const string& allele, size_t featureLength, bool pacbio_) {
+    size_t numSupports = this->numReadsSupportingAlleleStrict(allele, pacbio_);
     size_t numChannels = 6;
-
-    if (this->supports.find(allele) != this->supports.end()) {
-        numSupports += this->supports.find(allele)->second.size();
-    }
 
     if (numSupports == 0) {
         // Return dummy array if there is no support
@@ -1527,6 +1560,9 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
 
     for (auto& item: supportItems) {
         size_t readId = item.first;
+
+        if (pacbio_ ^ this->pacbio[readId]) continue;
+
         const auto& read = this->reads[readId];
         const auto& qual = this->qualities[readId];
         const auto& cigartuple = this->cigartuples[readId];

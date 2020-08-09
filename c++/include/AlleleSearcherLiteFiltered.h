@@ -24,6 +24,7 @@
 #include <boost/functional/hash.hpp>
 #include <exception>
 #include "utils.h"
+
 #define CLEAR(data) if (!data.empty()) data.clear();
 
 namespace p = boost::python;
@@ -48,6 +49,13 @@ typedef pair<pair<size_t, size_t>, pair<size_t, size_t> > Coupling;
         p::stl_input_iterator<int>() \
     )
 
+
+#define LIST_TO_BOOL_VECTOR(x) \
+    vector<bool>( \
+        p::stl_input_iterator<bool>(x), \
+        p::stl_input_iterator<bool>() \
+    )
+
 typedef unordered_map< pair<string, string>, int, boost::hash<pair<string, string> > >  Counts;
 typedef unordered_map<pair<string, string>, set<pair<string, string> >, boost::hash<pair<string, string> > > PartialMatchTracker;
 
@@ -64,13 +72,12 @@ struct PositionLite
     bool marked;
     PositionLite(const string& ref, const size_t numTracks, const size_t pos);
     void addTrackElement(const size_t trackId, const string& base, const size_t qual, long readPos);
-    void cutoffFn();
 };
 
 struct AlleleCounts {
     long pos;
     int refCount;
-    float total;
+    float total = 0;
     Counts altCounts;
     Counts leftPartialAltCounts;
     Counts rightPartialAltCounts;
@@ -81,6 +88,7 @@ struct AlleleSearcherLiteFiltered
 {
     const static unordered_map<string, size_t> BASE_TO_INDEX;
     vector<string> reads;
+    vector<bool> pacbio;
     vector<vector<size_t> > qualities;
     vector<size_t> referenceStarts;
     vector<size_t> mapq;
@@ -159,10 +167,10 @@ struct AlleleSearcherLiteFiltered
     np::ndarray computeFeatures(const string&, size_t);
     np::ndarray computeFeaturesAdvanced(const string&, size_t);
     np::ndarray computeFeaturesColored(const string&, size_t);
-    np::ndarray computeFeaturesColoredSimple(const string&, size_t);
+    np::ndarray computeFeaturesColoredSimple(const string&, size_t, bool);
     void computePositionMatrixParameters();
     size_t numReadsSupportingAllele(const string&);
-    size_t numReadsSupportingAlleleStrict(const string&);
+    size_t numReadsSupportingAlleleStrict(const string&, bool);
     vector<string> determineAllelesAtSite(size_t, size_t);
     size_t coverage(size_t);
     pair<size_t, size_t> expandRegion(size_t, size_t);
@@ -187,13 +195,11 @@ struct AlleleSearcherLiteFiltered
         const p::list& referenceStarts,
         const p::list& mapq,
         const p::list& orientation,
+        const p::list& pacbio,
         const string& reference,
         size_t windowStart,
         size_t qThreshold = 10,
-        bool leftAlign = false,
-        bool useMapq = false,
-        bool useOrientation = false,
-        bool useQEncoding = false
+        bool leftAlign = false
     );
         // Boost.Python places an upper limit of 15 arguments for the init function
         // https://www.boost.org/doc/libs/1_41_0/libs/python/doc/v2/configuration.html

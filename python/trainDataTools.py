@@ -476,7 +476,7 @@ def getLabeledCandidates(
     start,
     stop,
     segment,
-    searchers,
+    searcher,
     cluster,
     truths=None,
     highconf=None,
@@ -498,7 +498,7 @@ def getLabeledCandidates(
     :param segment: str
         Reference segment from start -> stop
 
-    :param searchers: list
+    :param searcher: list
         List of AlleleSearcherLite objects
 
     :param cluster: list
@@ -534,11 +534,14 @@ def getLabeledCandidates(
             if spot[1] - spot[0] > maxAlleleLength:
                 continue;
 
-        for i, searcher in enumerate(searchers):
-            candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
+        candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
+        allelesAtSpot += candidates;
 
-            if (i == 0) or (hotspotMethod == "BOTH"):
-                allelesAtSpot += candidates;
+        # for i, searcher in enumerate(searchers):
+        #     candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
+
+        #     if (i == 0) or (hotspotMethod == "BOTH"):
+        #         allelesAtSpot += candidates;
 
         allelesAtSpot = list(set(allelesAtSpot));
 
@@ -558,7 +561,7 @@ def getLabeledCandidates(
         # alleles that have no support. Sometimes it is possible that labels are created with alleles
         # with no support (especially in STR regions).
         candidateRecordsForTruthing = [];
-        searcher = searchers[0];
+        # searcher = searchers[0];
 
         for spot in cluster:
             if not checkIntersection(spot, highconf[chromosome]):
@@ -567,18 +570,38 @@ def getLabeledCandidates(
             searcher.assemble(spot[0], spot[1]);
             refAllele = segment[spot[0] - start: spot[1] - start];
 
+            # Only obtain allele list that has support from one sequencing technology
+            allelesToTruthFrom = [];
+
+            for allele in searcher.allelesAtSite:
+                if searcher.hybrid:
+                    if searcher.numReadsSupportingAlleleStrict(allele, 0) > 0:
+                        allelesToTruthFrom.append(allele);
+                else:
+                    allelesToTruthFrom.append(allele);
+
             candidateRecordsForTruthing.append(
                 createRecord(
-                    chromosome=chromosome, position=spot[0], refAllele=refAllele, allelesAtSite=list(searcher.allelesAtSite)
+                    chromosome=chromosome,
+                    position=spot[0],
+                    refAllele=refAllele,
+                    allelesAtSite=list(set(allelesToTruthFrom))
                 )
             );
 
         # Note: It seems ground-truth vcf has records outside of high-confidence regions
-        groundTruth = [item.data for item in truths[chromosome][start:stop] if checkIntersectionRecord(item.data, highconf[chromosome])];
+        groundTruth = [
+            item.data for item in truths[chromosome][start: stop] \
+                    if checkIntersectionRecord(item.data, highconf[chromosome])
+        ];
         sortedTruths = sorted(groundTruth, key=lambda x: x.position);
 
         try:
-            logging.debug("Calculating truths %s, %s, %s, %d" % (str(candidateRecordsForTruthing), str(sortedTruths), segment, start));
+            logging.debug(
+                "Calculating truths %s, %s, %s, %d" % (
+                    str(candidateRecordsForTruthing), str(sortedTruths), segment, start
+                )
+            );
             flag, truthAlleles = AnnotateRegions.labelSites(
                 segment,
                 candidateRecordsForTruthing,
@@ -613,15 +636,15 @@ def getLabeledCandidates(
     return candidateRecords;
 
 
-def createTensors(records, searchers, maxAlleleLength=80, hotspotMethod="BOTH"):
+def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
     """
     Create tensors for a given site (generator)
 
     :param records: list
         List of records
 
-    :param searchers: list
-        List of searchers
+    :param searcher: SearcherFactory 
+        Searcher for site
 
     :param maxAlleleLength: int
         Maximum size of alleles to check
@@ -636,20 +659,21 @@ def createTensors(records, searchers, maxAlleleLength=80, hotspotMethod="BOTH"):
         alleles_ = [record.ref] + record.alt;
         return set(alleles_[gt] for gt in record.gt);
 
-    assert(len(searchers) <= 2), "Only one-two searchers accepted as of now"
+    # assert(len(searchers) <= 2), "Only one-two searchers accepted as of now"
 
     for record in records:
         start_ = record.position;
         stop_ = start_ + len(record.ref);
 
-        for i, searcher in enumerate(searchers):
-            if (i > 0) and (hotspotMethod == "BAM1"):
-                searcher.clearAllelesForAssembly();
-                for allele in searchers[0].allelesAtSite:
-                    searcher.addAlleleForAssembly(allele);
+        # for i, searcher in enumerate(searchers):
+        #     if (i > 0) and (hotspotMethod == "BAM1"):
+        #         searcher.clearAllelesForAssembly();
+        #         for allele in searchers[0].allelesAtSite:
+        #             searcher.addAlleleForAssembly(allele);
 
-            logging.debug("Performing assembly with searcher %d" % i);
-            searcher.assemble(start_, stop_);
+        #     logging.debug("Performing assembly with searcher %d" % i);
+        #     searcher.assemble(start_, stop_);
+        searcher.assemble(start_, stop_);
 
         tensors = [];
         labels = [];
@@ -664,29 +688,33 @@ def createTensors(records, searchers, maxAlleleLength=80, hotspotMethod="BOTH"):
 
         for allele in [record.ref] + record.alt:
             # If there is no support for allele, then we don't include any information regarding the allele
-            if not any(searcher.numReadsSupportingAlleleStrict(allele) > 0 for searcher in searchers):
-                logging.debug("Allele %s has no support from any searcher" % allele);
+            numSupportsForAllele = searcher.numReadsSupportingAlleleStrict(allele, 0);
+
+            if searcher.hybrid:
+                numSupportsForAllele += searcher.numReadsSupportingAlleleStrict(allele, 1);
+
+            if numSupportsForAllele == 0:
+                logging.debug("Allele %s has no support from searcher" % allele);
                 continue;
 
             if len(allele) > maxAlleleLength:
                 logging.debug("Allele %s is too long" % allele);
                 continue;
 
-            searcher = searchers[0];
+            # searcher = searchers[0];
             alleles.append(allele);
             labels.append(1 if (allele in truths) else 0);
 
-            feature = searcher.computeFeatures(allele);
+            feature = searcher.computeFeatures(allele, 0);
             tensors.append(feature);
-            supportingReads.append(searcher.numReadsSupportingAllele(allele));
-            supportingReadsStrict.append(searcher.numReadsSupportingAlleleStrict(allele));
+            supportingReads.append(-1);
+            supportingReadsStrict.append(searcher.numReadsSupportingAlleleStrict(allele, 0));
 
-            if len(searchers) > 1:
-                searcher2 = searchers[1];
-                feature2 = searcher2.computeFeatures(allele);
+            if searcher.hybrid:
+                feature2 = searcher.computeFeatures(allele, 1);
                 tensors2.append(feature2);
-                supportingReads2.append(searcher2.numReadsSupportingAllele(allele));
-                supportingReadsStrict2.append(searcher2.numReadsSupportingAlleleStrict(allele));
+                supportingReads2.append(-1);
+                supportingReadsStrict2.append(searcher.numReadsSupportingAlleleStrict(allele, 1));
 
         siteLabel = 0 if sum(labels) <= 1 else 1;
         total = sum(labels);
@@ -714,14 +742,14 @@ def createTensors(records, searchers, maxAlleleLength=80, hotspotMethod="BOTH"):
 def data(
     hotspots,
     readSamplers,
-    searcherFactories,
+    searcherFactory,
     reference,
     vcf=None,
     bed=None,
     distance=PileupDataTools.MIN_DISTANCE,
     maxAlleleLength=80,
     hotspotMethod="BOTH",
-    searcherCollections=None,
+    searcherCollection=None,
 ):
     """
     Generator for data for training/variant calling
@@ -732,8 +760,8 @@ def data(
     :param readSamplers: list
         List of PileupDataTools.ReadSampler objects
 
-    :param searcherFactories: list
-        List of PileupDataTools.SearcherFactory objects
+    :param searcherFactory: SearcherFactory
+        Factory object to create searchers
 
     :param reference: str
         Reference cache location
@@ -753,7 +781,7 @@ def data(
     :param hotspotMethod: str
         Method to produce hotspots
 
-    :param searcherCollections: collections.defaultdict
+    :param searcherCollection: collections.defaultdict
         Dictionary of intervaltree objects searchers constructed
         to determine hotspot locations
     """
@@ -780,31 +808,22 @@ def data(
             # First, prepare AlleleSearcher instances for the cluster of hotspots
             start = cluster[0][0] - distance // 2;
             stop = cluster[-1][1] + distance // 2 - 1;
-            searchers = [];
+            searcher = None;
 
-            for i, (R, S) in enumerate(zip(readSamplers, searcherFactories)):
-                foundSearcher = False;
-
-                if searcherCollections is not None:
-                    searcherCollection = searcherCollections[i];
-                    preconstructed = searcherCollection[chromosome][start: stop];
-
-                    for pre in preconstructed:
-                        if pre[0] <= start < stop <= pre[1]:
-                            logging.debug("Found pre-constructed searcher for span %d, %d" % (start, stop));
-                            searchers.append(pre[2]);
-                            foundSearcher = True;
-                            break;
-
-                if not foundSearcher:
-                    logging.debug("Constructing fresh searcher for span %d, %d" % (start, stop));
-                    searchers.append(
-                        S(
-                            R(chromosome, start, stop),
-                            start,
-                            stop,
-                        )
-                    );
+            if searcherCollection is not None:
+                preconstructed = searcherCollection[chromosome][start: stop];
+                for pre in preconstructed:
+                    if pre[0] <= start < stop <= pre[1]:
+                        logging.debug("Found pre-constructed searcher for span %d, %d" % (start, stop));
+                        searcher = pre[2];
+                        break;
+            else:
+                container = [
+                    R(chromosome, start, stop) for R in readSamplers
+                ];
+                searcher = searcherFactory(
+                    container, start, stop
+                );
 
             # Create candidate vcf records for each hotspot and label them
             candidates = getLabeledCandidates(
@@ -812,7 +831,7 @@ def data(
                 start,
                 stop,
                 ''.join(ref[start: stop]),
-                searchers,
+                searcher,
                 cluster,
                 truthSet,
                 bedRegions,
@@ -839,7 +858,7 @@ def data(
                 continue;
 
             # Generate tensors
-            for tensors in createTensors(candidates, searchers, maxAlleleLength, hotspotMethod=hotspotMethod):
+            for tensors in createTensors(candidates, searcher, maxAlleleLength, hotspotMethod=hotspotMethod):
                 DATAGEN_TIME += (timer() - execStart);
                 yield tensors;
                 execStart = timer();

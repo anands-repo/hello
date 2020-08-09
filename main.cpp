@@ -296,12 +296,10 @@ BOOST_PYTHON_MODULE(libCallability)
               const p::list&,
               const p::list&,
               const p::list&,
+              const p::list&,
               const string&,
               size_t,
               size_t,
-              bool,
-              bool,
-              bool,
               bool
          >()
        )

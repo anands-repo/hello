@@ -10,6 +10,7 @@ import libCallability
 import collections
 import PileupDataTools
 from PySamFastaWrapper import PySamFastaWrapper
+import math
 
 CHUNK_SIZE_ILLUMINA = 400;
 CHUNK_SIZE_PACBIO = 10000;
@@ -24,9 +25,9 @@ except Exception:
 
 
 @profile
-def doOneChunkSingle(chromosome, begin, end, positions, readFactory, pacbio=False):
+def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
     """
-    Perform hotspot detection for a single chunk for a single bam file
+    Perform hotspot detection for a single chunk
 
     :param chromosome: str
         Chromosome in which to perform analysis
@@ -41,33 +42,31 @@ def doOneChunkSingle(chromosome, begin, end, positions, readFactory, pacbio=Fals
         Current set of positions into which to add differing
         regions from this
 
-    :param readFactory: str
-        Read factory
+    :param readFactory: list/str
+        Read factory or list of read factories in case of hybrid mode
 
     :param pacbio: bool
         Whether the reads are pacbio reads
     """
-    container = readFactory(
-        chromosome, begin, end
-    );
+    if type(readFactory) is list:
+        container = [
+            rF(
+                chromosome, begin, end
+            ) for rF in readFactory
+        ];
+    else:
+        container = readFactory(chromosome, begin, end);
 
-    if len(container.pileupreads) == 0:
+    if all(len(c.pileupreads) == 0 for c in container):
         return;
 
     try:
         searcher = AlleleSearcherLite(
-            container, begin, end, cache, strict=False
+            container, begin, end, cache, strict=False, pacbio=pacbio
         );
     except LocationOutOfBounds:
         logging.warning("Out of bounds locations found for chunk %s, %d, %d" % (chromosome, begin, end));
         return;
-
-    if pacbio:
-        # Raise indel threshold for PacBio reads
-        # for hotspot detection, otherwise too many erroneous locations
-        # get involved
-        logging.debug("Setting indel threshold for pacbio reads");
-        searcher.searcher.indelThreshold = 0.12;
 
     for left, right in searcher.differingRegions:
         for j in range(left, right):
@@ -82,17 +81,13 @@ def hotspotGeneratorSingle(
     chunkSize,
     pacbio=False,
 ):
-    numChunks = (stop - start) // chunkSize;
-
-    if numChunks * chunkSize < (stop - start):
-        numChunks += 1;
-
+    numChunks = math.ceil((stop - start) / chunkSize);
     positions = collections.OrderedDict();
 
     for i in range(numChunks):
         begin_ = start + chunkSize * i;
         end_ = min(begin_ + chunkSize, stop);
-        doOneChunkSingle(chromosome, begin_, end_, positions, readFactory, pacbio=pacbio);
+        doOneChunk(chromosome, begin_, end_, positions, readFactory, pacbio=pacbio);
 
     sortedPositions = sorted(list(positions.keys()));
 
@@ -109,33 +104,14 @@ def hotspotGeneratorHybrid(
     chunkSize0,
     chunkSize1,
 ):
-    numChunks = (stop - start) // chunkSize1;
-
-    if numChunks * chunkSize1 < (stop - start):
-        numChunks += 1;
-
+    numChunks = math.ceil((stop - start) / chunkSize1);
     positions = collections.OrderedDict();
 
     # Perform outer loop over bam1 (PacBio reads)
     for i in range(numChunks):
         begin_ = start + chunkSize1 * i;
         end_ = min(begin_ + chunkSize1, stop);
-
-        # Collect all TGS positions
-        doOneChunkSingle(chromosome, begin_, end_, positions, readFactory1,  pacbio=True);
-
-        # Collect NGS positions using an iterator
-        ngsIter = hotspotGeneratorSingle(
-            readFactory0,
-            chromosome,
-            begin_,
-            end_,
-            chunkSize0,
-            pacbio=False,
-        );
-
-        for p_ in ngsIter:
-            positions[p_] = None;
+        doOneChunk(chromosome, begin_, end_, positions, [readFactory0, readFactory1],  pacbio=False);
 
     sortedPositions = sorted(list(positions.keys()));
 
