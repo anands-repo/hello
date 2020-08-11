@@ -15,18 +15,6 @@ string printCigar(const vector<pair<size_t, size_t> >& cigars)
     return sstr.str();
 }
 
-PositionLite::PositionLite(const string& ref, const size_t numTracks, const size_t pos)
-: ref(ref), pos(pos), score(0), coverage(0), marked(false)
-{
-    for (size_t j = 0; j < numTracks; j++)
-    {
-        string alt_;
-        vector<size_t> qual_;
-        this->alt.push_back(alt_);
-        this->qual.push_back(qual_);
-    }
-}
-
 void AlleleCounts::resolvePartials()
 {
     PartialMatchTracker partialMatches;
@@ -109,15 +97,6 @@ void AlleleCounts::resolvePartials()
     }
     resolvePartialMatches(this->altCounts, partialMatches, this->rightPartialAltCounts);
     this->rightPartialAltCounts.clear();
-}
-
-// Add a single base and single quality to a specific track
-void PositionLite::addTrackElement(const size_t trackId, const string& base, const size_t qual, long readPos)
-{
-    auto& altTrack  = this->alt[trackId];
-    auto& qualTrack = this->qual[trackId];
-    altTrack = altTrack + base;
-    qualTrack.push_back(qual);
 }
 
 // Expand a given region so that adjacent indels are absorbed into the region
@@ -509,33 +488,6 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     }
 }
 
-void AlleleSearcherLiteFiltered::prepMatrix() {
-    if (!this->matrix.empty()) {
-        return;
-    }
-
-    // Create aligned pairs
-    this->getAlignedPairs();
-
-    // Create a Position item for each reference position
-    for (size_t i = 0; i < this->reference.size(); i++)
-    {
-        string refItem(1, this->reference[i]);
-        PositionLite p(refItem, this->reads.size(), windowStart + i);
-        this->matrix.emplace_back(move(p));
-    }
-
-    // Add reads to Position matrix
-    for (size_t index = 0; index < this->reads.size(); index++)
-    {
-        this->addRead(
-            index,
-            this->referenceStarts[index],
-            this->alignedPairs[index]
-        );
-    }
-}
-
 void AlleleSearcherLiteFiltered::prepReadObjs() {
     if (!this->read_objs.empty()) return;
 
@@ -559,207 +511,16 @@ void AlleleSearcherLiteFiltered::prepReadObjs() {
     }
 }
 
-// Add a read to the Position matrix
-void AlleleSearcherLiteFiltered::addRead(
-    const size_t index,
-    const size_t referenceStart,
-    const AlignedPair& alignedPairs
-)
-{
-    const string& read = this->reads[index];
-    const vector<size_t>& quality = this->qualities[index];
-    size_t refCounter = referenceStart - this->windowStart;
-
-    for (auto& alignedPair : alignedPairs)
-    {
-        if ((alignedPair.first >= 0) || (alignedPair.second >= 0))
-        {
-            auto& position = this->matrix[refCounter];
-            string base;
-            size_t qual;
-
-            if (alignedPair.first >= 0)
-            {
-                // Insertion or Match
-                base = read[alignedPair.first];
-                qual = quality[alignedPair.first];
-            }
-            else
-            {
-                // Deletion (refCounter increments)
-                base = '-';
-                qual = 30;
-            }
-
-            position.addTrackElement(index, base, qual, alignedPair.first);
-        }
-
-        refCounter = alignedPair.second >= 0 ? refCounter + 1 : refCounter;
-
-        assert(refCounter < this->matrix.size());
-    }
-}
-
-// Does allele in trackId between start (inclusive) and stop (exclusive) meet quality requirements?
-bool AlleleSearcherLiteFiltered::doesAlleleMeetQuality(size_t trackId, size_t start, size_t stop)
-{
-    assert(stop >= start);
-
-    if (stop == start) return false;
-
-    for (size_t i = start; i < stop; i++)
-    {
-        for (auto& q : this->matrix[i].qual[trackId])
-        {
-            if (q < this->qThreshold)
-            {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-// Get bases in a track between start and stop
-// Note: this function supports right-to-left indexing as well, for legacy reasons
-string AlleleSearcherLiteFiltered::getBasesInTrack(const size_t trackId, const int start, const int stop)
-{
-    bool rightWards = (start >= 0) || ((start < 0) && (stop <= 0));
-    string basesInTrack;
-
-    if ((start < 0) && (stop <= 0))
-        return this->reads[trackId]; // All bases in a specific track
-
-    int startPoint = rightWards ? start : stop - 1;
-    int increment  = rightWards ? 1 : -1;
-
-    for (int i = startPoint; 
-        rightWards ? (stop > 0 ? i < stop : i < this->matrix.size()) : i >= max_(start,0);
-        i += increment 
-    )
-    {
-        const string& bases = this->matrix[i].alt[trackId];
-
-        if (bases.empty()) break;
-
-        if (basesInTrack.empty())
-        {
-            basesInTrack = bases;
-        }
-        else
-        {
-            basesInTrack = rightWards ? basesInTrack + bases : bases + basesInTrack;
-        }
-    }
-
-    boost::erase_all(basesInTrack, "-");
-
-    return basesInTrack;
-}
-
-// Get a set of quality values from start (inclusive) to stop (exclusive). Unlike
-// getBasesInTrack, this expects stop > start
-vector<size_t> AlleleSearcherLiteFiltered::getQualitiesInTrack(size_t trackId, int start, int stop)
-{
-    vector<size_t> qualities;
-
-    for (size_t i = start; i < stop; i++)
-    {
-        const string& bases = this->matrix[i].alt[trackId];
-        const vector<size_t>& quals = this->matrix[i].qual[trackId];
-
-        if (bases.empty()) break;
-
-        if (bases.size() == 1)
-        {
-            if (bases != "-")
-            {
-                qualities.insert(qualities.end(), quals.begin(), quals.end());
-            }
-        }
-        else
-        {
-            qualities.insert(qualities.end(), quals.begin(), quals.end());
-        }
-    }
-
-    return qualities;
-}
-
-// Is a read track empty between start and stop
-bool AlleleSearcherLiteFiltered::isTrackEmpty(const size_t trackId, const size_t start, const size_t stop)
-{
-    if (stop > start)
-    {
-        for (size_t i = start; i < stop; i++)
-        {
-            if (this->matrix[i].alt[trackId].empty()) return true;
-        }
-
-        return false;
-    }
-
-    return true;
-}
-
-// Is there an indel in a cluster of positions?
-bool AlleleSearcherLiteFiltered::indelInCluster(const vector<size_t>& cluster)
-{
-    for (auto& l_ : cluster)
-    {
-        auto l = l_ - this->windowStart;
-
-        if (this->matrix[l].vtypes.find("I") != this->matrix[l].vtypes.end())
-        {
-            return true;
-        }
-
-        if (this->matrix[l].vtypes.find("D") != this->matrix[l].vtypes.end())
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// Is there an empty allele in cluster between start and stop
-// Empty allele refers to deletion, not whether the track is empty
-bool AlleleSearcherLiteFiltered::isEmptyAlleleInCluster(size_t first, size_t last)
-{
-
-    for (size_t i = 0; i < this->reads.size(); i++)
-    {
-        if (!this->isTrackEmpty(i, first, last))
-        {
-            string allele = this->getBasesInTrack(i, first, last);
-            if (allele.size() == 0)
-            {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
 // Push a cluster of alleles into regions, but make sure there are no empty alleles at the start or stop
 // position of the cluster. If there is, shift the cluster end-points
 void AlleleSearcherLiteFiltered::pushRegions(vector<size_t>& cluster, vector<pair<size_t,size_t> >& regions)
 {
-    // if (this->indelInCluster(cluster))
-    {
-        pair<size_t,size_t> region;
-        // region.first  = this->windowStart + cluster.front();
-        // region.second = this->windowStart + cluster.back() + 1;
-        region.first  = cluster.front();
-        region.second = cluster.back() + 1;
-        bool flag = true;
+    pair<size_t,size_t> region;
+    region.first  = cluster.front();
+    region.second = cluster.back() + 1;
+    bool flag = true;
 
-        regions.push_back(region);
-    }
-
+    regions.push_back(region);
     cluster.clear();
 }
 
@@ -995,87 +756,6 @@ void AlleleSearcherLiteFiltered::assemble(size_t start_, size_t stop_, bool noFi
     DEBUG << "Completed assembly";
 }
 
-// Get bases from position till the end of a read's alignment
-string AlleleSearcherLiteFiltered::getLeftBases(size_t trackId, size_t pos)
-{
-    string bases;
-
-    for (long i = pos; i >= 0; i--)
-    {
-        const auto& position = this->matrix[i];
-
-        if (position.alt[trackId].empty())
-            break;
-
-        const string& altString = position.alt[trackId];
-
-        if (altString != "-")
-        {
-            bases = altString + bases;  // Note: append bases to the left
-        }
-    }
-
-    return bases;
-}
-
-// Get bases to the right of a position
-string AlleleSearcherLiteFiltered::getRightBases(size_t trackId, size_t pos)
-{
-    string bases;
-
-    for (long i = pos; i < this->matrix.size(); i++)
-    {
-        const auto& position = this->matrix[i];
-
-        if (position.alt[trackId].empty()) break;
-
-        const string& altString = position.alt[trackId];
-
-        if (altString != "-") bases += altString;
-    }
-
-    return bases;
-}
-
-// Count the number of bases to the left of a given position in a given track
-size_t AlleleSearcherLiteFiltered::countLeftBases(size_t trackId, size_t pos)
-{
-    size_t numBases = 0;
-
-    for (long i = pos; i >= 0; i--)
-    {
-        const auto& position = this->matrix[i];
-
-        if (position.alt[trackId].empty())
-            break;
-
-        const string& altString = position.alt[trackId];
-
-        if (altString != "-")
-            numBases += altString.size();
-    }
-
-    return numBases;
-}
-
-size_t AlleleSearcherLiteFiltered::countRightBases(size_t trackId, size_t pos)
-{
-    size_t numBases = 0;
-
-    for (long i = pos; i < this->matrix.size(); i++)
-    {
-        const auto& position = this->matrix[i];
-
-        if (position.alt[trackId].empty()) break;
-
-        const string& altString = position.alt[trackId];
-
-        if (altString != "-") numBases += altString.size();
-    }
-
-    return numBases;
-}
-
 size_t AlleleSearcherLiteFiltered::numReadsSupportingAllele(const string& allele)
 {
     size_t num = 0;
@@ -1282,12 +962,6 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
     std::copy(array.begin(), array.end(), reinterpret_cast<uint8_t*>(featureMapNp.get_data()));
 
     return featureMapNp;
-}
-
-size_t AlleleSearcherLiteFiltered::coverage(size_t position_)
-{
-    size_t position = position_ - this->windowStart;
-    return this->matrix[position].coverage;
 }
 
 AlleleSearcherLiteFiltered::~AlleleSearcherLiteFiltered()

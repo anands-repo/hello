@@ -60,21 +60,6 @@ typedef pair<pair<size_t, size_t>, pair<size_t, size_t> > Coupling;
 typedef unordered_map< pair<string, string>, int, boost::hash<pair<string, string> > >  Counts;
 typedef unordered_map<pair<string, string>, set<pair<string, string> >, boost::hash<pair<string, string> > > PartialMatchTracker;
 
-// A position in the reference matrix
-struct PositionLite
-{
-    size_t pos;
-    string ref;
-    vector<string> alt;
-    vector<vector<size_t> > qual;
-    int score;
-    int coverage;
-    unordered_set<string> vtypes;
-    bool marked;
-    PositionLite(const string& ref, const size_t numTracks, const size_t pos);
-    void addTrackElement(const size_t trackId, const string& base, const size_t qual, long readPos);
-};
-
 struct AlleleCounts {
     long pos;
     int refCount;
@@ -98,7 +83,6 @@ struct AlleleSearcherLiteFiltered
     size_t windowStart;
     size_t qThreshold;
     string reference;
-    vector<PositionLite> matrix;
     unordered_set<string> alleles;
     vector<string> names;
     float qualityToProbability[100];
@@ -148,31 +132,16 @@ struct AlleleSearcherLiteFiltered
     void updateAlleleCounts();
     void listToQuality(const p::list& qualities);
     void listToCigar(const p::list& cigartuples);
-    void addRead(
-        const size_t index,
-        const size_t referenceStart,
-        const vector<pair<long,long> >& alignedPairs
-    );
-    bool indelInCluster(const vector<size_t>&);
     void pushRegions(vector<size_t>&, vector<pair<size_t,size_t> >&);
     bool isTrackEmpty(const size_t, const size_t, const size_t);
-    string getBasesInTrack(const size_t, const int, const int);
-    vector<size_t> getQualitiesInTrack(size_t, int, int);
-    bool doesAlleleMeetQuality(size_t, size_t, size_t);
     void getAlignedPairs();
-    bool isEmptyAlleleInCluster(size_t, size_t);
     void determineDifferingRegions();
     void assemble(size_t, size_t, bool);
     np::ndarray computeFeaturesColoredSimple(const string&, size_t, bool);
     size_t numReadsSupportingAllele(const string&);
     size_t numReadsSupportingAlleleStrict(const string&, bool);
     vector<string> determineAllelesAtSite(size_t, size_t);
-    size_t coverage(size_t);
     pair<size_t, size_t> expandRegion(size_t, size_t);
-    size_t countLeftBases(size_t, size_t);
-    size_t countRightBases(size_t, size_t);
-    string getLeftBases(size_t, size_t);
-    string getRightBases(size_t, size_t);
     int BaseColor(char base);
     int BaseQualityColor(int qual);
     int MappingQualityColor(int qual);
