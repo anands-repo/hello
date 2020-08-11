@@ -454,7 +454,11 @@ def clusterLocations(locations, distance=PileupDataTools.MIN_DISTANCE, maxAllele
 
     for location in locations:
         if location[1] - location[0] > maxAlleleLength:
-            continue;
+            # In this case, cleave the cluster here
+            if len(cluster) > 0:
+                yield cluster
+                cluster = []
+                continue
 
         if len(cluster) == 0:
             cluster.append(location);
@@ -531,18 +535,8 @@ def getLabeledCandidates(
             if not checkIntersection(spot, highconf[chromosome]):
                 continue;
 
-            if spot[1] - spot[0] > maxAlleleLength:
-                continue;
-
         candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
         allelesAtSpot += candidates;
-
-        # for i, searcher in enumerate(searchers):
-        #     candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
-
-        #     if (i == 0) or (hotspotMethod == "BOTH"):
-        #         allelesAtSpot += candidates;
-
         allelesAtSpot = list(set(allelesAtSpot));
 
         candidateRecords.append(
@@ -643,7 +637,7 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
     :param records: list
         List of records
 
-    :param searcher: SearcherFactory 
+    :param searcher: AlleleSearcher
         Searcher for site
 
     :param maxAlleleLength: int
@@ -659,20 +653,10 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
         alleles_ = [record.ref] + record.alt;
         return set(alleles_[gt] for gt in record.gt);
 
-    # assert(len(searchers) <= 2), "Only one-two searchers accepted as of now"
-
     for record in records:
         start_ = record.position;
         stop_ = start_ + len(record.ref);
 
-        # for i, searcher in enumerate(searchers):
-        #     if (i > 0) and (hotspotMethod == "BAM1"):
-        #         searcher.clearAllelesForAssembly();
-        #         for allele in searchers[0].allelesAtSite:
-        #             searcher.addAlleleForAssembly(allele);
-
-        #     logging.debug("Performing assembly with searcher %d" % i);
-        #     searcher.assemble(start_, stop_);
         searcher.assemble(start_, stop_);
 
         tensors = [];
@@ -813,11 +797,12 @@ def data(
             if searcherCollection is not None:
                 preconstructed = searcherCollection[chromosome][start: stop];
                 for pre in preconstructed:
-                    if pre[0] <= start < stop <= pre[1]:
+                    if (pre[0] <= start < stop <= pre[1]) and pre[2]:
                         logging.debug("Found pre-constructed searcher for span %d, %d" % (start, stop));
                         searcher = pre[2];
                         break;
-            else:
+
+            if not searcher:
                 container = [
                     R(chromosome, start, stop) for R in readSamplers
                 ];

@@ -536,6 +536,29 @@ void AlleleSearcherLiteFiltered::prepMatrix() {
     }
 }
 
+void AlleleSearcherLiteFiltered::prepReadObjs() {
+    if (!this->read_objs.empty()) return;
+
+    for (int i = 0; i < this->reads.size(); i++) {
+        const auto& read = this->reads[i];
+        const auto& quality = this->qualities[i];
+        const auto& cigar = this->cigartuples[i];
+        const auto& ref_start = this->referenceStarts[i];
+        const auto& pacbio = this->pacbio[i];
+        const auto& mapq = this->mapq[i];
+        Read readobj(
+            read,
+            quality,
+            cigar,
+            ref_start,
+            pacbio,
+            i,
+            mapq
+        );
+        this->read_objs.emplace_back(std::move(readobj));
+    }
+}
+
 // Add a read to the Position matrix
 void AlleleSearcherLiteFiltered::addRead(
     const size_t index,
@@ -737,18 +760,6 @@ void AlleleSearcherLiteFiltered::pushRegions(vector<size_t>& cluster, vector<pai
         regions.push_back(region);
     }
 
-    /// TEST THIS!!! Meaning, I have commented this, and we need to test
-    /// whether commenting this has an effect or not
-    /// Because intervaltrees are used in python, the result of the above code
-    /// absorbs the results of the code below
-    // // else
-    // // {
-    //     for (auto& l : cluster)
-    //     {
-    //         pair<size_t,size_t> region(l, l + 1);
-    //         regions.push_back(region);
-    //     }
-    // // }
     cluster.clear();
 }
 
@@ -822,102 +833,23 @@ void AlleleSearcherLiteFiltered::determineDifferingRegions()
     }
 }
 
-// Function for scoring each location as to its activity
-void AlleleSearcherLiteFiltered::scoreLocations()
-{
-    size_t positionStart = 0;
-    size_t positionEnd   = this->matrix.size();
-
-    for (size_t positionCounter = positionStart;
-        positionCounter < positionEnd;
-        positionCounter++
-    )
-    {
-        auto& position = this->matrix[positionCounter];
-        for (size_t i = 0; i < position.alt.size(); i++)
-        {
-            if (position.alt[i].empty()) continue;
-            string readTrack(position.alt[i]);
-            const vector<size_t>& qualityTrack = position.qual[i];
-            const string& ref = position.ref;
-            boost::erase_all(readTrack, "-");
-
-            if (readTrack.size() <= ref.size())
-            {
-                if (readTrack != ref)
-                {
-                    // Mismatch
-                    if ((readTrack.size() == ref.size()) && (readTrack.size() == 1))
-                    {
-                        if (qualityTrack.front() >= this->qThreshold)
-                        {
-                            position.score += this->mismatchScore;
-                            string vtype("M");
-                            position.vtypes.insert(vtype);
-                            // DEBUG << "Found mismatch at position " << positionCounter + this->windowStart << " reference = " << position.ref << ", alt = " << position.alt[i] << " read name = " << this->names[i] << " reference start = " << this->referenceStarts[i] << " cigars = " << printCigar(this->cigartuples[i]);
-                        }
-                    }
-                    // Deletion or MNP
-                    else
-                    {
-                        position.score += (readTrack.size() != ref.size()) ? this->deleteScore : this->mismatchScore;
-                        string vtype(readTrack.size() != ref.size() ? "D" : "M");
-                        position.vtypes.insert(vtype);
-                        // DEBUG << "Found deletion at position " << positionCounter + this->windowStart << " reference = " << position.ref << ", alt = " << position.alt[i] << " read name = " << this->names[i] << " reference start = " << this->referenceStarts[i] << " cigars = " << printCigar(this->cigartuples[i]);
-                    }
-                }
-            }
-            // Insertion
-            else
-            {
-                string vtype("I");
-
-                if (positionCounter >= 1)
-                {
-                    this->matrix[positionCounter-1].score += this->insertScore;
-                    this->matrix[positionCounter-1].vtypes.insert(vtype);
-                }
-                position.score += this->insertScore;
-                position.vtypes.insert(vtype);
-                // DEBUG << "Found insertion at position " << positionCounter + this->windowStart << " reference = " << position.ref << ", alt = " << position.alt[i] << " read name = " << this->names[i] << " reference start = " << this->referenceStarts[i] << " cigars = " << printCigar(this->cigartuples[i]);
-            }
-
-            position.coverage++;
-        }
-    }
-}
-
 // A utility function to obtain all alleles at a site
 vector<string> AlleleSearcherLiteFiltered::determineAllelesAtSite(size_t start_, size_t stop_)
 {
-    this->prepMatrix();
+    this->prepReadObjs();
 
-    vector<string> allelesInRegion;
-    unordered_set<string> allelesInRegion_;
-    size_t start = start_ - this->windowStart;
-    size_t stop = stop_ - this->windowStart;
+    unordered_set<string> alleleSet;
 
-    DEBUG << "stop = " << stop << ", start = " << start;
-
-    for (size_t i = 0; i < this->reads.size(); i++)
-    {
-        // When collecting alleles at a site, ensure that they are collected from reads
-        // that do not have a deletion at start/stop
-        if (
-            (!this->isTrackEmpty(i, start, stop)) &&
-            (this->getBasesInTrack(i, start, start + 1).size() != 0) &&
-            (this->getBasesInTrack(i, stop - 1, stop).size() != 0) && 
-            (this->getBasesInTrack(i, start, start + 1).size() <= 1)
-        ) {
-            string allele = this->getBasesInTrack(i, start, stop);
-            allelesInRegion_.insert(allele);
-        }
+    for (const auto& read_obj: this->read_objs) {
+        auto result = read_obj.get_aligned_bases(start_, stop_);
+        if (result.second != AlignedBaseStatus::Success) continue;
+        if (result.third < this->qThreshold) continue;
+        if (result.first.find("N") != string::npos) continue;
+        if (read_obj.mapq < this->minMapQ) continue;
+        alleleSet.insert(result.first);
     }
 
-    for (auto& item : allelesInRegion_)
-    {
-        allelesInRegion.push_back(item);
-    }
+    vector<string> allelesInRegion(alleleSet.begin(), alleleSet.end());
 
     return allelesInRegion;
 }
@@ -935,256 +867,130 @@ void AlleleSearcherLiteFiltered::clearAllelesForAssembly()
 /* Determine supporting reads */
 void AlleleSearcherLiteFiltered::assemble(size_t start_, size_t stop_, bool noFilter)
 {
-    this->prepMatrix();
+    this->prepReadObjs();
 
     DEBUG << "Assembling between " << start_ << " (inclusive) and " << stop_;
 
-    this->assemblyStart = start_;
-    this->assemblyStop = stop_;
-
-    size_t start = start_ - this->windowStart;
-    size_t stop = stop_ - this->windowStart;
-
     CLEAR(this->allelesAtSite)
     CLEAR(this->refAllele)
-    CLEAR(this->numItemsPerMatrixPosition)
-    CLEAR(this->ndarrayPositionToMatrixPosition)
-    CLEAR(this->matrixPositionToNdarrayStartPosition)
     CLEAR(this->supports)
-    CLEAR(this->nonUniqueSupports)
 
-    if ((start_ < this->windowStart) || (stop > this->matrix.size()))
-    {
-        return;
-    }
+    unordered_map<string, vector<size_t>> partial_supports_left;
+    unordered_map<string, vector<size_t>> partial_supports_right;
 
-    // Determine reference allele
-    for (size_t i = start; i < stop; i++)
-    {
-        this->refAllele += this->matrix[i].ref;
-    }
+    this->refAllele = this->reference.substr(start_ - this->windowStart, stop_ - start_);
 
-    DEBUG << "Found ref allele " << this->refAllele ;
-
-    auto notFlankedByDeletion = [this] (long i, long start, long stop) -> bool {
-        return (
-            (this->getBasesInTrack(i, start, start + 1).size() != 0) &&
-            (this->getBasesInTrack(i, stop - 1, stop).size() != 0)
+    if (this->allelesForAssembly.empty()) {
+        DEBUG << "Alleles for assembly not provided, determining alleles for assembly";
+        auto alleles = this->determineAllelesAtSite(start_, stop_);
+        this->allelesAtSite.insert(
+            this->allelesAtSite.end(), alleles.begin(), alleles.end()
         );
-    };
+    } else {
+        DEBUG << "Using the provided alleles for assembly";
+        this->allelesAtSite.insert(
+            this->allelesAtSite.end(), this->allelesForAssembly.begin(), this->allelesForAssembly.end()
+        );
+    }
 
-    auto notFlankedByInsertion = [this] (long i, long start, long stop) -> bool {
-        /*
-        Based on alignedPair and addRead, insertions are added NOT to the "launching" position
-        in the reference, but to the "landing" position on the reference; unlike the VCF standard.
-        During feature-map construction, it is reversed, though, and follows the VCF standard.
-        Hence, we only need to check whether an insertion is there at the first reference position. Any
-        insertion at the last base position is technically between start and stop.
-        */
-       return (this->getBasesInTrack(i, start, start + 1).size() <= 1);
-    };
+    unordered_set<string> allelesForAssembly(this->allelesAtSite.begin(), this->allelesAtSite.end());
 
-    // Create support containers for each allele
-    // either by looking at each read OR ...
-    if (this->allelesForAssembly.empty())
-    {
-        for (size_t i = 0; i < this->reads.size(); i++)
-        {
-            if ((!this->isTrackEmpty(i, start, stop)) && (noFilter | this->doesAlleleMeetQuality(i, start, stop))) 
-            {
-                // Ensure that read doesn't have a deletion at start and stop positions
-                if (
-                    // (this->getBasesInTrack(i, start, start + 1).size() != 0) &&
-                    // (this->getBasesInTrack(i, stop - 1, stop).size() != 0)
-                    notFlankedByDeletion(i, start, stop) && notFlankedByInsertion(i, start, stop)
-                ) {
-                    string allele = this->getBasesInTrack(i, start, stop);
+    // Bucketize reads
+    for (auto& read_obj: this->read_objs) {
+        if (read_obj.mapq < this->minMapQ) continue;
 
-                    if (this->supports.find(allele) == this->supports.end())
-                    {
-                        Mapping emptyMapping;
-                        this->supports[allele] = emptyMapping;
-                        this->allelesAtSite.push_back(allele);
-                    }
+        auto result = read_obj.get_aligned_bases(start_, stop_);
+
+        switch(result.second) {
+            case AlignedBaseStatus::Success: {
+                if (allelesForAssembly.find(result.first) != allelesForAssembly.end()) {
+                    this->supports[result.first].push_back(read_obj.read_id);
+                }
+                break;
+            }
+            case AlignedBaseStatus::LeftPartial: {
+                partial_supports_left[result.first].push_back(read_obj.read_id);
+                break;
+            }
+            case AlignedBaseStatus::RightPartial: {
+                partial_supports_right[result.first].push_back(read_obj.read_id);
+                break;
+            }
+            default: continue;
+        }
+    }
+
+    // Resolve partials
+    auto get_partial_to_full_allele_maps = [](
+        const unordered_map<string, vector<size_t>>& partial_map,
+        const unordered_map<string, vector<size_t>>& full_map,
+        unordered_map<string, string>& resolution_map,
+        bool left
+    ) {
+        unordered_map<string, unordered_set<string>> resolution_map_preliminary;
+
+        // Get all full alleles to which a partial allele is a (partial) match
+        for (auto& partial_item: partial_map) {
+            const string& partial_allele = partial_item.first;
+
+            for (auto& full_support_item: full_map) {
+                const string& full_allele = full_support_item.first;
+
+                if (full_allele.size() < partial_allele.size()) continue;
+
+                string substr = left ? full_allele.substr(
+                    full_allele.size() - partial_allele.size(),
+                    partial_allele.size()
+                ) : full_allele.substr(0, partial_allele.size());
+
+                if (substr == partial_allele) {
+                    resolution_map_preliminary[partial_allele].insert(full_allele);
                 }
             }
         }
-    }
-    // ... using a predetermined set of alleles
-    else
-    {
-        for (auto& allele : this->allelesForAssembly)
-        {
-            Mapping emptyMapping;
-            this->supports[allele] = emptyMapping;
-            this->allelesAtSite.push_back(allele);
-        }
-    }
 
-    // Remove alleles with Ns in them, as well as alleles that are too long
-    //
-    // Note: Just by controlling determineDifferingRegions function, we have avoided long deletions
-    // Now, we need to avoid long insertions; that can only be accomplished through filtering
-    // individual alleles based on their length
-    //
-    // Note: We do not have to modify supports for this
-    // because features are composed only for alleles found in
-    // allelesAtSite
-    vector<string> goodAlleles;
-
-    for (auto& allele : this->allelesAtSite) {
-        if ((allele.find("N") == std::string::npos) && (allele.size() <= this->maxAlleleSize)) {
-            goodAlleles.push_back(allele);
-        }
-    }
-
-    this->allelesAtSite = goodAlleles;
-
-    auto minBaseQual = [this, noFilter] (size_t readId, int position, int length) -> size_t {
-        if (noFilter) return this->qThreshold + 10;  // If no filtering is desired, don't allow it
-        const auto& quality = this->qualities[readId];
-        if (position + length > quality.size()) {
-            return *min_element(quality.begin() + position, quality.end());
-        } else {
-            return *min_element(quality.begin() + position, quality.begin() + position + length);
+        // Only maintain those partial alleles which have a single match
+        for (auto& preliminary_resolution: resolution_map_preliminary) {
+            if (preliminary_resolution.second.size() == 1) {
+                resolution_map[preliminary_resolution.first] = *preliminary_resolution.second.begin();
+            }
         }
     };
 
-    // Add reads supporting the assembly of each allele
-    for (size_t i = 0; i < this->reads.size(); i++)
-    {
-        // Check read mapping quality
-        if (this->mapq[i] < this->minMapQ) {
-            continue;
+    auto push_partial_to_full = [](
+        unordered_map<string, string>& partial_to_full_resolution,
+        unordered_map<string, vector<size_t>>& full_map,
+        unordered_map<string, vector<size_t>>& partial_map
+    ) {
+        for (auto& partial_map_item: partial_to_full_resolution) {
+            const string& partial_allele = partial_map_item.first;
+            const string& full_allele = partial_map_item.second;
+            full_map[full_allele].insert(
+                full_map[full_allele].end(),
+                partial_map[partial_allele].begin(),
+                partial_map[partial_allele].end()
+            );
         }
+    };
 
-        // If the track is non-empty add the read to an appropriate allele
-        if (
-            (!this->isTrackEmpty(i, start, stop)) // &&
-            // (this->getBasesInTrack(i, start, start + 1).size() != 0) &&
-            // ((this->getBasesInTrack(i, stop - 1, stop).size() != 0)
-        ) {
-            if (
-                notFlankedByDeletion(i, start, stop) & notFlankedByInsertion(i, start, stop)
-            ) {
-                string alleleInRead = this->getBasesInTrack(i, start, stop);
-                if (this->supports.find(alleleInRead) == this->supports.end()) continue;
-                size_t numAlignedBasesLeft = this->countLeftBases(i, start);
-                size_t numLeftSoftClippedBases = (this->cigartuples[i].front().first == BAM_CSOFT_CLIP) ? this->cigartuples[i].front().second : 0;
-                long startPositionInRead = numAlignedBasesLeft + numLeftSoftClippedBases - 1;
-                long stopPositionInRead = startPositionInRead + stop - start;
+    // Resolve left partials
+    unordered_map<string, string> partial_to_full_allele_maps;
+    get_partial_to_full_allele_maps(partial_supports_left, this->supports, partial_to_full_allele_maps, true);
+    push_partial_to_full(partial_to_full_allele_maps, this->supports, partial_supports_left);
 
-                // Quality score cutoff for allelic bases
-                if (minBaseQual(i, startPositionInRead, alleleInRead.size()) >= this->qThreshold) {
-                    this->supports[alleleInRead][i] = pair<long, long>(startPositionInRead, stopPositionInRead);
-                    DEBUG << "Adding read " << this->names[i] << " in support of allele " << alleleInRead;
-                } else {
-                    DEBUG << "Read " << this->names[i] << " has low quality bases at variant site, discarding";
-                }
-            }
-        }
-        else
-        {
-            // In cases where a read only covers the starting or the ending position
-            // of an allele (but not both), we extract the overlapping bases and check
-            // the bases for partial match to any allele
-            bool leftIsNotEmpty = !this->isTrackEmpty(i, start, start + 1);
-            bool rightIsNotEmpty = !this->isTrackEmpty(i, stop - 1, stop);
+    // Resolve right partials
+    partial_to_full_allele_maps.clear();
+    get_partial_to_full_allele_maps(partial_supports_right, this->supports, partial_to_full_allele_maps, false);
+    push_partial_to_full(partial_to_full_allele_maps, this->supports, partial_supports_right);
 
-            // If the non-empty side ends in a deletion, discontinue
-            // Note that for the left-most position, we do not want either insertion or deletion
-            // Only way we do not have an insertion at the left position is to have a match or substitution
-            // both resulting in alt bases with length of 1
-            if (leftIsNotEmpty && (this->getBasesInTrack(i, start, start + 1).size() != 1)) continue;
-            if (rightIsNotEmpty && (this->getBasesInTrack(i, stop - 1, stop).size() == 0)) continue;
-
-            if ((leftIsNotEmpty || rightIsNotEmpty))
-            {
-                DEBUG << "Checking read " << this->names[i] << " for partial support of alleles";
-
-                string alleleInRead;
-
-                if (leftIsNotEmpty)
-                {
-                    alleleInRead = this->getRightBases(i, start);
-                    DEBUG << "Found left allele " << alleleInRead << " in read " << this->names[i];
-                }
-                else
-                {
-                    alleleInRead = this->getLeftBases(i, stop - 1);
-                    DEBUG << "Found right allele " << alleleInRead << " in read " << this->names[i];
-                }
-
-                // Run a check for partial matches
-                unordered_set<string> supportedAlleles;
-
-                for (auto& supportItems : this->supports)
-                {
-                    const string& allele = supportItems.first;
-
-                    if (allele.size() < alleleInRead.size()) continue;
-
-                    string substringToCompare;
-
-                    if (leftIsNotEmpty)
-                    {
-                        substringToCompare = allele.substr(0, alleleInRead.size());
-                    }
-                    else
-                    {
-                        substringToCompare = allele.substr(allele.size() - alleleInRead.size(), alleleInRead.size());
-                    }
-                    
-
-                    if (substringToCompare == alleleInRead)
-                    {
-                        supportedAlleles.insert(allele);
-                    }
-                }
-
-                if (supportedAlleles.empty()) continue;
-
-                long startPositionInRead;
-                long stopPositionInRead;
-
-                if (leftIsNotEmpty)
-                {
-                    size_t numAlignedBasesLeft = this->countLeftBases(i, start);
-                    size_t numLeftSoftClippedBases = (this->cigartuples[i].front().first == BAM_CSOFT_CLIP) ? this->cigartuples[i].front().second : 0;
-                    startPositionInRead = numAlignedBasesLeft + numLeftSoftClippedBases - 1;
-                    stopPositionInRead = -1;
-                }
-                else
-                {
-                    size_t numAlignedBasesLeft = this->countLeftBases(i, stop - 1);
-                    size_t numLeftSoftClippedBases = (this->cigartuples[i].front().first == BAM_CSOFT_CLIP) ? this->cigartuples[i].front().second : 0;
-                    startPositionInRead = -1;
-                    stopPositionInRead = numAlignedBasesLeft + numLeftSoftClippedBases; 
-                }
-                
-                if (supportedAlleles.size() == 1)
-                {
-                    const auto& supportedAllele = *supportedAlleles.begin();
-
-                    DEBUG << "Read " << this->names[i] << " supports allele " << supportedAllele << " through partial overlap";
-
-                    if (minBaseQual(i, startPositionInRead, supportedAllele.size()) >= this->qThreshold) {
-                        this->supports[supportedAllele][i] = pair<long, long>(startPositionInRead, stopPositionInRead);
-                    } else {
-                        DEBUG << "Read " << this->names[i] << " fails quality check at variant site";
-                    }
-                }
-                else
-                {
-                    DEBUG << "Read " << this->names[i] << " supports multiple alleles through partial overlaps";
-                    for (auto& supportedAllele : supportedAlleles)
-                    {
-                        this->nonUniqueSupports[supportedAllele][i] = pair<long, long>(startPositionInRead, stopPositionInRead);
-                    }
-                }
-            }
+    for (auto& item: supports) {
+        for (auto& read: item.second) {
+            DEBUG << "Read " << read << " supports allele " << item.first;
         }
     }
+
+    this->assemblyStart = start_;
+    this->assemblyStop = stop_;
 
     DEBUG << "Completed assembly";
 }
@@ -1274,7 +1080,7 @@ size_t AlleleSearcherLiteFiltered::numReadsSupportingAllele(const string& allele
 {
     size_t num = 0;
     if (this->supports.find(allele) != this->supports.end()) num += this->supports.find(allele)->second.size();
-    if (this->nonUniqueSupports.find(allele) != this->nonUniqueSupports.end()) num += this->nonUniqueSupports.find(allele)->second.size();
+    // if (this->nonUniqueSupports.find(allele) != this->nonUniqueSupports.end()) num += this->nonUniqueSupports.find(allele)->second.size();
     return num;
 }
 
@@ -1283,207 +1089,11 @@ size_t AlleleSearcherLiteFiltered::numReadsSupportingAlleleStrict(const string& 
     size_t num = 0;
     if (this->supports.find(allele) != this->supports.end()) {
         for (auto& item: this->supports[allele]) {
-            size_t readId = item.first;
+            size_t readId = item; // .first;
             if (!(pacbio_ ^ this->pacbio[readId])) num ++;
         }
     }
     return num;
-}
-
-// Prep for advanced feature computation
-void AlleleSearcherLiteFiltered::computePositionMatrixParameters()
-{
-    if (!this->numItemsPerMatrixPosition.empty()) return;
-
-    // Count the number of entries per reference position etc
-    size_t index = 0;
-    size_t totalNumItems = 0;
-
-    for (auto& position : this->matrix)
-    {
-        size_t numItems;
-
-        // At each position we fill in the longest alt allele string
-        if (!position.alt.empty())
-        {
-            numItems = max_element(
-                position.alt.begin(),
-                position.alt.end(),
-                [](string a, string b) {return a.size() < b.size();}
-            )->size();
-        }
-
-        numItems = max_(1, numItems);
-
-        this->numItemsPerMatrixPosition[index] = numItems;
-        this->ndarrayPositionToMatrixPosition[totalNumItems] = index;
-        this->matrixPositionToNdarrayStartPosition[index] = totalNumItems;
-
-        totalNumItems += numItems;
-        index++;
-    }
-
-    this->numTotalFeatureItems = totalNumItems;
-}
-
-// Computes advanced features 
-np::ndarray AlleleSearcherLiteFiltered::computeFeaturesAdvanced(const string& allele, size_t featureLength)
-{
-    this->computePositionMatrixParameters();
-
-    size_t numSupports = 0;
-
-    if (this->supports.find(allele) != this->supports.end())
-    {
-        numSupports += this->supports.find(allele)->second.size();
-    }
-
-    size_t numSymbols = AlleleSearcherLiteFiltered::BASE_TO_INDEX.size() + 1;
-    size_t numChannels = 3 * numSymbols;
-    size_t readTrackSize = 2 * numSymbols;
-
-    if (numSupports == 0)
-    {
-        // Return dummy array, if there is no support
-        p::tuple shape = p::make_tuple(1, featureLength, numChannels);
-        np::dtype dtype = np::dtype::get_builtin<float>();
-        np::ndarray array = np::zeros(shape, dtype);
-        return array;
-    }
-
-    p::tuple shape = p::make_tuple(numSupports, this->numTotalFeatureItems, numChannels);
-    np::dtype dtype = np::dtype::get_builtin<float>();
-    np::ndarray array = np::zeros(shape, dtype);
-
-    size_t readCounter = 0;
-    const Mapping& supportItems = this->supports[allele];
-
-    // Start filling in reads
-    for (auto& supportItem : supportItems)
-    {
-        size_t readId = supportItem.first;
-        size_t referenceStart = this->referenceStarts[readId];
-        size_t matrixPosition = referenceStart - this->windowStart;
-        size_t ndarrayPosition = this->matrixPositionToNdarrayStartPosition[matrixPosition];
-        int mapq = this->mapq[readId];
-        float p1 = 1 - this->qualityToProbability[mapq];
-        int orientation = this->orientation[readId];
-
-        while(!this->isTrackEmpty(readId, matrixPosition, matrixPosition + 1))
-        {
-            size_t numItemsToFill = this->numItemsPerMatrixPosition[matrixPosition];
-            string stringFromReadToFill = this->getBasesInTrack(readId, matrixPosition, matrixPosition + 1);
-            vector<size_t> qualsFromReadToFill = this->getQualitiesInTrack(readId, matrixPosition, matrixPosition + 1);
-
-            // In case of indels make sure everything is right-justified
-            for (size_t i = 0; i < numItemsToFill; i++)
-            {
-                // Add read track
-                size_t offset = 0;
-                float value = 0;
-                float p0;
-                if ((this->assemblyStart - this->windowStart <= matrixPosition) && (matrixPosition < this->assemblyStop - this->windowStart)) offset += numSymbols;
-
-                // This is the index to use to access read bases
-                int index = int(i) - int(numItemsToFill - stringFromReadToFill.size());
-
-                // if (i < stringFromReadToFill.size())
-                if (index >= 0)
-                {
-                    string base = stringFromReadToFill.substr(index, 1);
-                    size_t qualValue = qualsFromReadToFill[index];
-                    offset += this->BASE_TO_INDEX.find(base)->second;
-                    p0 = 1 - this->qualityToProbability[qualValue];
-
-                    if (this->useMapq)
-                    {
-                        p0 = p0 + p1 - p0 * p1;
-                    }
-
-                    // If we want quality to be encoded directly ... 
-                    if (this->useQEncoding)
-                    {
-                        value = qualValue;
-                    }
-                    else
-                    {
-                        value = 1 - p0;
-                    }
-                }
-                else
-                {
-                    offset += numSymbols - 1;    // indicates a gap
-                    value = 1;
-                }
-
-                // If we want to use the orientation of the read
-                // modify the value based on the orientation of the read
-                if (this->useOrientation)
-                {
-                    value = value * orientation;
-                }
-
-                array[readCounter][ndarrayPosition + i][offset] = value;
-                float refValue = (this->useMapq & this->useQEncoding) ? mapq : 1;
-
-                // Add reference track (only the last position gets the reference base)
-                if (i < numItemsToFill - 1)
-                {
-                    array[readCounter][ndarrayPosition + i][readTrackSize + numSymbols - 1] = refValue;
-                }
-                else
-                {
-                    // If we want to use MAPQ and if qualities should be directly encoded instead
-                    // of being converted to probability scores, then directly put mapq here
-                    // instead of using 1/0
-                    string refBase = this->matrix[matrixPosition].ref;
-                    offset = this->BASE_TO_INDEX.find(refBase)->second;
-                    array[readCounter][ndarrayPosition + i][readTrackSize + offset] = refValue;
-                }
-            }
-
-            matrixPosition++;
-            ndarrayPosition = this->matrixPositionToNdarrayStartPosition[matrixPosition];
-        }
-
-        readCounter++;
-    }
-
-    // Copy over the matrix appropriately to truncated feature map, such that the feature map has
-    // the allele positions centered
-    shape = p::make_tuple(numSupports, featureLength, numChannels);
-    np::ndarray featureMap = np::zeros(shape, dtype);
-
-    // Positioning the allele site at the center of the feature map
-    // the positions start, stop correspond to this->matrixPositionToNdarrayStartPosition[start - windowStart],
-    // this->matrixPositionToNdarrayStartPosition[stop - windowStart]. This length of alleles must be centered.
-    size_t alleleSizeInFeatureMap =  this->matrixPositionToNdarrayStartPosition[this->assemblyStop - this->windowStart] -
-                                        this->matrixPositionToNdarrayStartPosition[this->assemblyStart - this->windowStart];
-    // fixedPoint here corresponds to the start position of assemblyStart within the featureMap np::ndarray object
-    size_t fixedPoint = (featureLength - alleleSizeInFeatureMap) / 2;
-    // Left flank is the number of left-flanking positions we can fill into the feature map
-    // It is limited by the number of left positions available in the full feature map, and the truncated feature map
-    size_t leftFlankLength = min_(fixedPoint, this->assemblyStart - this->windowStart);
-    // We use this to determine the start positions within the copyer and the copyee
-    size_t startPositionInFullFeatureMap = (this->assemblyStart - this->windowStart) - leftFlankLength;
-    size_t startPositionInTruncatedFeatureMap = fixedPoint - leftFlankLength;
-
-    // Actually filling in the truncated feature map
-    for (
-        size_t i = startPositionInTruncatedFeatureMap, j = startPositionInFullFeatureMap;
-        ((i < featureLength) && (j < this->numTotalFeatureItems));
-        i++, j++
-    ) {
-        for (size_t r = 0; r < readCounter; r++)
-        {
-            for (size_t c = 0; c < numChannels; c++)
-            {
-                featureMap[r][i][c] = array[r][j][c];
-            }
-        }
-    }
-
-    return featureMap;
 }
 
 // Modified from DeepVariant - for read and reference tracks
@@ -1559,7 +1169,8 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
     auto between = [] (long x, long y, long z) { return ((x <= y) && (y < z)); };
 
     for (auto& item: supportItems) {
-        size_t readId = item.first;
+        // size_t readId = item.first;
+        size_t readId = item;
 
         if (pacbio_ ^ this->pacbio[readId]) continue;
 
@@ -1671,258 +1282,6 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
     std::copy(array.begin(), array.end(), reinterpret_cast<uint8_t*>(featureMapNp.get_data()));
 
     return featureMapNp;
-}
-
-// Computes advanced features with coloring and not dimensions. This is similar to Google's DeepVariant scheme.
-// The dataset obtained from this should be much more space efficient than before.
-np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColored(const string& allele, size_t featureLength)
-{
-    this->computePositionMatrixParameters();
-
-    size_t numSupports = 0;
-
-    if (this->supports.find(allele) != this->supports.end())
-    {
-        numSupports += this->supports.find(allele)->second.size();
-    }
-
-    size_t numChannels = 6;
-
-    if (numSupports == 0)
-    {
-        // Return dummy array, if there is no support
-        p::tuple shape = p::make_tuple(1, featureLength, numChannels);
-        np::dtype dtype = np::dtype::get_builtin<uint8_t>();
-        np::ndarray array = np::zeros(shape, dtype);
-        return array;
-    }
-
-    DEBUG << "Constructing feature map";
-
-    // We envisage a hypothetical full feature map, which covers the entire range of reads in the region
-    // We do not fill the full feature map, but only use parts of it relevant for our purpose (featureLength-sized slice)
-    // This featureLength-sized slice is initialized below (called truncated feature map)
-    Array3D<uint8_t> array(numSupports, featureLength, numChannels);
-
-    // Positioning the allele site at the center of the truncated feature map
-    // the positions start, stop correspond to this->matrixPositionToNdarrayStartPosition[start - windowStart],
-    // this->matrixPositionToNdarrayStartPosition[stop - windowStart]. This length of alleles must be centered.
-    int alleleSizeInFeatureMap =  int(this->matrixPositionToNdarrayStartPosition[this->assemblyStop - this->windowStart]) -
-                                        int(this->matrixPositionToNdarrayStartPosition[this->assemblyStart - this->windowStart]);
-    // fixedPoint here corresponds to the start position of assemblyStart within the truncated featureMap np::ndarray object
-    int fixedPoint = int(featureLength - alleleSizeInFeatureMap) / 2;
-
-    // Left flank is the number of left-flanking positions we can fill into the feature map
-    // It is limited by the number of left positions available in the full feature map, and the truncated feature map
-    int leftFlankLength = min_(fixedPoint, int(this->assemblyStart) - int(this->windowStart));
-
-    // We use this to determine the start positions within the full and truncated feature maps
-    int startPositionInFullFeatureMap = int(this->matrixPositionToNdarrayStartPosition[(this->assemblyStart - this->windowStart)]) - int(leftFlankLength);
-    size_t startPositionInTruncatedFeatureMap = int(fixedPoint) - int(leftFlankLength);
-
-    // Filling in the truncated feature map below
-    size_t readCounter = 0;
-    const Mapping& supportItems = this->supports[allele];
-
-    // Start filling in reads
-    for (auto& supportItem : supportItems)
-    {
-        size_t readId = supportItem.first;
-        int mapq = this->mapq[readId];
-        int orientation = this->orientation[readId];
-        size_t referenceStart = this->referenceStarts[readId];
-        size_t matrixPosition = referenceStart - this->windowStart;
-        size_t ndarrayPosition = this->matrixPositionToNdarrayStartPosition[matrixPosition];
-        size_t ndarrayPositionNext = this->matrixPositionToNdarrayStartPosition[matrixPosition + 1];
-
-        // if ndarrayPosition is beyond the start position, never mind
-        if (!(ndarrayPosition > startPositionInFullFeatureMap))
-        {
-            // If not ...
-            // Find the specific matrixPosition such that it sandwiches the start position within the full feature map
-            while (!((ndarrayPosition <= startPositionInFullFeatureMap) && (ndarrayPositionNext > startPositionInFullFeatureMap)))
-            {
-                matrixPosition++;
-                ndarrayPosition = this->matrixPositionToNdarrayStartPosition[matrixPosition];
-                ndarrayPositionNext = this->matrixPositionToNdarrayStartPosition[matrixPosition + 1];
-            }
-        }
-
-        bool fillCompleted = false;
-
-        while ((!this->isTrackEmpty(readId, matrixPosition, matrixPosition + 1)) && (!fillCompleted))
-        {
-            size_t numItemsToFill = this->numItemsPerMatrixPosition[matrixPosition];
-            string stringFromReadToFill = this->getBasesInTrack(readId, matrixPosition, matrixPosition + 1);
-            vector<size_t> qualsFromReadToFill = this->getQualitiesInTrack(readId, matrixPosition, matrixPosition + 1);
-
-            // In case of insertions make sure everything is right-justified
-            for (size_t i = 0; i < numItemsToFill; i++)
-            {
-                int index = int(i) - int(numItemsToFill - stringFromReadToFill.size());
-
-                int fmapindex = int(ndarrayPosition + i) - int(startPositionInFullFeatureMap) + int(startPositionInTruncatedFeatureMap);
-
-                if ((ndarrayPosition + i) >= (startPositionInFullFeatureMap + featureLength))
-                {
-                    fillCompleted = true;
-                    break;
-                }
-
-                // This can happen if filling doesn't start at the first position
-                // (an incomplete feature from a read that is left-justified)
-                if (fmapindex >= (int) featureLength)
-                {
-                    fillCompleted = true;
-                    break;
-                }
-
-                if (ndarrayPosition + i < startPositionInFullFeatureMap)
-                {
-                    continue;
-                }
-
-                // index >= 0 => we need to fill something here for reads with right-justification rule
-                if (index >= 0)
-                {
-                    char base = stringFromReadToFill[index];
-                    int qual = qualsFromReadToFill[index];
-                    accessArray(array, readCounter, fmapindex, READ_BASE_TRACK) = this->BaseColor(base);
-                    accessArray(array, readCounter, fmapindex, READ_QUAL_TRACK) = this->BaseQualityColor(qual);
-                    accessArray(array, readCounter, fmapindex, READ_MAPQ_TRACK) = this->MappingQualityColor(mapq);
-                    accessArray(array, readCounter, fmapindex, READ_ORIENTATION_TRACK) = this->StrandColor(orientation);
-                }
-
-                // Every position gets the appropriate position marker
-                accessArray(array, readCounter, fmapindex, POSITION_MARKER_TRACK) = this->PositionColor(matrixPosition);
-
-                // Only the last position gets the reference base
-                if (i == numItemsToFill - 1)
-                {
-                    string refBase = this->matrix[matrixPosition].ref;
-                    assert(refBase.size() == 1);
-                    accessArray(array, readCounter, fmapindex, REF_BASE_TRACK) = this->BaseColor(refBase[0]);
-                }
-            }
-
-            matrixPosition++;
-            ndarrayPosition = this->matrixPositionToNdarrayStartPosition[matrixPosition];
-        }
-
-        readCounter++;
-    }
-
-    // Copy over to numpy array
-    p::tuple shape = p::make_tuple(numSupports, featureLength, numChannels);
-    np::dtype dtype = np::dtype::get_builtin<uint8_t>();
-    np::ndarray featureMapNp = np::zeros(shape, dtype);
-
-    // Copy over into numpy array
-    std::copy(array.begin(), array.end(), reinterpret_cast<uint8_t*>(featureMapNp.get_data()));
-
-    DEBUG << "Completed constructing feature maps";
-
-    return featureMapNp;
-}
-
-np::ndarray AlleleSearcherLiteFiltered::computeFeatures(const string& allele, size_t featureLength)
-{
-    // Determine shape of np::ndarray
-    size_t length = featureLength;
-    size_t depth = 16;
-    p::tuple shape = p::make_tuple(length, depth);
-    np::dtype dtype = np::dtype::get_builtin<float>();
-    np::ndarray array = np::zeros(shape, dtype);
-
-    // Center the allele
-    size_t alleleStartPosition = (featureLength - allele.size()) / 2;
-    size_t alleleStopPosition = alleleStartPosition + allele.size();
-
-    if (
-        (this->supports.find(allele) == this->supports.end()) && 
-        (this->nonUniqueSupports.find(allele) == this->nonUniqueSupports.end())
-    ) return array;
-
-    for (size_t iter = 0; iter < 2; iter++)
-    {
-
-        Mapping supportItem;
-        
-        if (iter == 0)
-        {
-            if (this->supports.find(allele) != this->supports.end())
-            {
-                supportItem = this->supports.find(allele)->second;
-            }
-            else
-            {
-                DEBUG << "Found no support for allele " << allele;
-                continue;
-            }
-        }    
-        else
-        {
-            if (this->nonUniqueSupports.find(allele) != this->nonUniqueSupports.end())
-            {
-                supportItem = nonUniqueSupports.find(allele)->second;
-            }
-            else
-            {
-                DEBUG << "Found no non-unique support for allele " << allele;
-                continue;
-            }
-        }
-        
-
-        for (auto& supportingReadEntry : supportItem)
-        {
-            size_t readId = supportingReadEntry.first;
-            DEBUG << "Read " << this->names[readId] << " supports allele " << allele << ((iter == 0) ? " fully" : " partially");
-            const vector<size_t>& quality = this->qualities[readId];
-            const string& read = this->reads[readId];
-            pair<long, long> readRange = supportingReadEntry.second;
-            Coupling fillRange;
-
-            DEBUG << "Read range is " << readRange.first << ", " << readRange.second;
-
-            if (readRange.first >= 0)
-            {
-                pair<size_t, size_t> fillRangeStart;
-                pair<size_t, size_t> fillRangeStop;
-                fillRangeStart.first = alleleStartPosition > readRange.first ? alleleStartPosition - readRange.first : 0;
-                fillRangeStart.second = alleleStartPosition > readRange.first ? 0 : readRange.first - alleleStartPosition;
-                size_t featureFillLength = min_(featureLength - fillRangeStart.first, read.size() - fillRangeStart.second);
-                fillRangeStop.first = fillRangeStart.first + featureFillLength;
-                fillRangeStop.second = fillRangeStart.second + featureFillLength;
-                fillRange = Coupling(fillRangeStart, fillRangeStop);
-            }
-            else if (readRange.second >= 0)
-            {
-                pair<size_t, size_t> fillRangeStart;
-                pair<size_t, size_t> fillRangeStop;
-                fillRangeStart.first = alleleStopPosition > readRange.second ? alleleStopPosition - readRange.second : 0;
-                fillRangeStart.second = alleleStopPosition > readRange.second ? 0 : readRange.second - alleleStopPosition;
-                size_t featureFillLength = min_(featureLength - fillRangeStart.first, read.size() - fillRangeStart.second);
-                fillRangeStop.first = fillRangeStart.first + featureFillLength;
-                fillRangeStop.second = fillRangeStart.second + featureFillLength;
-                fillRange = Coupling(fillRangeStart, fillRangeStop);
-            }
-
-            DEBUG << "Filling in feature map in range " << fillRange.first.first << ", " << fillRange.second.first;
-
-            for (size_t i = fillRange.first.first, j = fillRange.first.second; i < fillRange.second.first; i++, j++)
-            {
-                size_t offset = (alleleStartPosition <= i) && (i < alleleStopPosition) ? 4 : 0;
-                offset += (iter == 1) ? 8 : 0;
-                size_t q = quality[j];
-                string base = read.substr(j, 1);
-                float value = this->qualityToProbability[q];
-                array[i][offset + AlleleSearcherLiteFiltered::BASE_TO_INDEX.find(base)->second] += value;
-            }
-        }
-    }
-
-    return array;
 }
 
 size_t AlleleSearcherLiteFiltered::coverage(size_t position_)

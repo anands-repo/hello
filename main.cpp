@@ -8,22 +8,6 @@
 #include <boost/log/sources/logger.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/core/null_deleter.hpp>
-// #include "Allele.h"
-// #include "Callability.h"
-// #include "CallabilityAnalyzer.h"
-// #include "KmerMaps.h"
-// #include "Graph.h"
-// #include "GraphAdvanced.h"
-// #include "ContigAdvanced.h"
-// #include "IterativeAssembler.hh"
-// #include "IterativeAssemblerOptions.hh"
-// #include "AssemblyReadInfo.hh"
-// #include "AssembledContig.hh"
-// #include "SearchRepeats.h"
-// #include "ProductConvolver.h"
-// #include "ContigSearcher.h"
-// #include "AlleleSearcher.h"
-// #include "AlleleSearcherLite.h"
 #include "AlleleSearcherLiteFiltered.h"
 
 using namespace boost::python;
@@ -104,189 +88,6 @@ BOOST_PYTHON_MODULE(libCallability)
    class_<vector<pair<int,int> > >("pairVectorInt")
        .def(vector_indexing_suite<vector<pair<int,int> > >());
 
-   //class_<MappingObject>("MappingObject")
-   //    .def_readonly("contig", &MappingObject::contig)
-   //    .def_readonly("reads", &MappingObject::reads)
-   //    .def_readonly("qualities", &MappingObject::qualities)
-   //    .def_readonly("readRanges", &MappingObject::readRanges)
-   //    .def_readwrite("logLikelihood", &MappingObject::logLikelihood)
-   //    .def_readonly("readIds", &MappingObject::readIds)
-   //    .def_readonly("contigId", &MappingObject::contigId)
-   //    .def_readonly("contigRanges", &MappingObject::contigRanges);
-
-   //// Allow boost to handle conversion from vector<MappingObject>
-   //class_<vector<MappingObject> >("MappingVector")
-   //   .def(vector_indexing_suite<vector<MappingObject> >());
-
-   //class_<Allele>("Allele", init<const boost::python::list&, const boost::python::list&, const boost::python::list&>())
-   //    .def("getPosteriorLikelihoods", &Allele::getPosteriorLikelihoods)
-   //    .def("getContigLikelihoods", &Allele::getContigLikelihoods)
-   //    .def("getAnalysisLikelihood", &Allele::getAnalysisLikelihood)
-   //    .def("getAnalysisContigLikelihood", &Allele::getAnalysisContigLikelihood);
-
-   //class_<Callability>("Callability", init<size_t>())
-   //    .def("programFromList", &Callability::programFromList)
-   //    .def("programFromReads", &Callability::programFromReads)
-   //    .def("callEvidence", &Callability::callEvidence)
-   //    .def("callEvidencePairwise", &Callability::callEvidencePairwise)
-   //    .def("getContigLikelihood", &Callability::getContigLikelihood)
-   //    .def("set_use_first_kmer_as_flag", &Callability::set_use_first_kmer_as_flag);
-
-   //class_<CallabilityAnalyzer>("CallabilityAnalyzer", init<size_t,size_t,size_t>())
-   //    .def("addReads", &CallabilityAnalyzer::addReads)
-   //    .def("performAnalysis", &CallabilityAnalyzer::performAnalysis);
-
-   //class_<Graph>("Graph", init<size_t,float>())
-   //    .def("addReadsList", &Graph::addReadsList)
-   //    .def("constructGraph", &Graph::constructGraph)
-   //    .def("traverseGraph", &Graph::traverseGraph)
-   //    .def("checkForCycles", &Graph::checkForCycles)
-   //    .def("reset", &Graph::reset)
-   //    .def("getEnlightenedContigs", &Graph::getEnlightenedContigs)
-   //    .def("getPurgedContigs", &Graph::getPurgedContigs)
-   //    .def("mapReads", &Graph::mapReads)
-   //    .def_readonly("caller", &Graph::caller)
-   //    .def("mappings", &Graph::mappings)
-   //    .def("deleteContigs", &Graph::deleteContigs)
-   //    .def("printContigs", &Graph::printContigs);
-
-   //class_<ContigAdvanced>("ContigAdvanced")
-   //    .def_readonly("contig", &ContigAdvanced::contig)
-   //    .def_readonly("readIds", &ContigAdvanced::readIds);
-
-   //// Allow boost python to translate contig vector
-   //class_<vector<ContigAdvanced> >("ContigAdvancedVector")
-   //    .def(vector_indexing_suite<vector<ContigAdvanced> >());
-
-   //class_<GraphAdvanced>("GraphAdvanced", init<size_t,size_t,size_t,const boost::python::list&,const string&,const string&,bool>())
-   //    .def("traverseGraph", &GraphAdvanced::traverseGraph)
-   //    .def_readonly("maxK", &GraphAdvanced::maxK)
-   //    .def_readonly("contigs", &GraphAdvanced::enlightenedContigs)
-   //    .def("initDistribution", &GraphAdvanced::initProbabilisticTables)
-   //    .def("getFeaturesAtPosition", &GraphAdvanced::getFeaturesAtPosition)
-   //    .def("features", &GraphAdvanced::features)
-   //    .def("isKmerCyclic", &GraphAdvanced::isKmerCyclic);
-
-   //class_<KmerMaps>("KmerMaps", init<size_t,size_t,size_t>())
-   //    .def("addReads", &KmerMaps::addReads)
-   //    .def("contigFeatures", &KmerMaps::contigFeatures)
-   //    .def("multiplicities", &KmerMaps::kmerMultiplicity)
-   //    .def("likelihood", &KmerMaps::getContigLikelihood)
-   //    .def_readonly("features", &KmerMaps::data)
-   //    .def_readonly("labels", &KmerMaps::labels);
-
-   //class_<IterativeAssemblerOptions>("IterativeAssemblerOptions")
-   //    .def_readwrite("minQval", &IterativeAssemblerOptions::minQval)
-   //    .def_readwrite("minlength", &IterativeAssemblerOptions::minWordLength)
-   //    .def_readwrite("maxlength", &IterativeAssemblerOptions::maxWordLength);
-
-   //class_<AssemblyReadInfo>("AssemblyReadInfo")
-   //    .def_readonly("isUsed", &AssemblyReadInfo::isUsed)
-   //    .def_readonly("isFiltered", &AssemblyReadInfo::isFiltered)
-   //    .def_readonly("isPseudo", &AssemblyReadInfo::isPseudo)
-   //    .def_readonly("contigIds", &AssemblyReadInfo::contigIds);
-
-   //class_<AssembledContig>("AssembledContig")
-   //    .def_readonly("contig", &AssembledContig::seq);
-
-   //// Allow boost python to translate contig vector
-   //class_<vector<AssembledContig> >("AssembledContigVector")
-   //        .def(vector_indexing_suite<vector<AssembledContig> >());
-
-   //class_<Features>("Features")
-   //    .def_readonly("frequencies", &Features::frequencies)
-   //    .def_readonly("cyclicity", &Features::cyclicity)
-   //    .def_readonly("branching", &Features::branching)
-   //    .def_readonly("labels", &Features::labels);
-
-   //def("runAssembler", &runAssembler);
-
-   //class_<ContigSearcher>("ContigSearcher", init<boost::python::list&,const size_t,const size_t>())
-   //    .def("addAllele", &ContigSearcher::addAllele)
-   //    .def("search", &ContigSearcher::search)
-   //    .def("supportPositions", &ContigSearcher::supportPositions)
-   //    .def("alleleForContig", &ContigSearcher::alleleForContig)
-   //    .def("alleleInContig", &ContigSearcher::alleleInContig)
-   //    .def("allelePositionInContig", &ContigSearcher::allelePositionInContig);
-
-   //class_<AlleleSearcher>("AlleleSearcher",
-   //     init<
-   //         const p::list&,
-   //         const p::list&,
-   //         const p::list&,
-   //         const p::list&,
-   //         const p::list&,
-   //         const string&,
-   //         const size_t,
-   //         const size_t,
-   //         const size_t,
-   //         const size_t,
-   //         const size_t,
-   //         const size_t,
-   //         bool,
-   //         bool
-   //     >()
-   //    )
-   //    .def_readonly("refAllele", &AlleleSearcher::refAllele)
-   //    .def_readonly("allelesAtSite", &AlleleSearcher::allelesAtSite)
-   //    .def_readonly("differingRegions", &AlleleSearcher::differingRegions)
-   //    .def_readwrite("mismatchScore", &AlleleSearcher::mismatchScore)
-   //    .def_readwrite("insertScore", &AlleleSearcher::insertScore)
-   //    .def_readwrite("deleteScore", &AlleleSearcher::deleteScore)
-   //    .def("scoreLocations", &AlleleSearcher::scoreLocations)
-   //    .def("determineDifferingRegions", &AlleleSearcher::determineDifferingRegions)
-   //    .def("printMatrix", &AlleleSearcher::printMatrix)
-   //    .def("computeContigs", &AlleleSearcher::computeContigs)
-   //    .def("allelePositionInContig", &AlleleSearcher::allelePositionInContig)
-   //    .def("supportPositions", &AlleleSearcher::supportPositions)
-   //    .def("coverage", &AlleleSearcher::coverage)
-   //    .def("assemble", &AlleleSearcher::assemble)
-   //    .def("alleleInContig", &AlleleSearcher::alleleInContig)
-   //    .def("setAlleleForAssembly", &AlleleSearcher::setAlleleForAssembly)
-   //    .def("numReadsSupportingAllele", &AlleleSearcher::numReadsSupportingAllele)
-   //    .def("numReadsSupportingAlleleStrict", &AlleleSearcher::numReadsSupportingAlleleStrict)
-   //    .def("determineAllelesAtSite", &AlleleSearcher::determineAllelesAtSite)
-   //    .def("expandRegion", &AlleleSearcher::expandRegion)
-   //    .def("computeFeatures", &AlleleSearcher::computeFeatures);
-
-   //class_<AlleleSearcherLite>("AlleleSearcherLite",
-   //      init<
-   //           const p::list&,
-   //           const p::list&,
-   //           const p::list&,
-   //           const p::list&,
-   //           const p::list&,
-   //           const p::list&,
-   //           const p::list&,
-   //           const string&,
-   //           size_t,
-   //           size_t,
-   //           bool,
-   //           bool,
-   //           bool,
-   //           bool
-   //      >()
-   //    )
-   //    .def_readonly("refAllele", &AlleleSearcherLite::refAllele)
-   //    .def_readonly("allelesAtSite", &AlleleSearcherLite::allelesAtSite)
-   //    .def_readonly("differingRegions", &AlleleSearcherLite::differingRegions)
-   //    .def_readwrite("mismatchScore", &AlleleSearcherLite::mismatchScore)
-   //    .def_readwrite("insertScore", &AlleleSearcherLite::insertScore)
-   //    .def_readwrite("deleteScore", &AlleleSearcherLite::deleteScore)
-   //    .def("scoreLocations", &AlleleSearcherLite::scoreLocations)
-   //    .def("determineDifferingRegions", &AlleleSearcherLite::determineDifferingRegions)
-   //    .def("coverage", &AlleleSearcherLite::coverage)
-   //    .def("assemble", &AlleleSearcherLite::assemble)
-   //    .def("numReadsSupportingAllele", &AlleleSearcherLite::numReadsSupportingAllele)
-   //    .def("numReadsSupportingAlleleStrict", &AlleleSearcherLite::numReadsSupportingAlleleStrict)
-   //    .def("determineAllelesAtSite", &AlleleSearcherLite::determineAllelesAtSite)
-   //    .def("expandRegion", &AlleleSearcherLite::expandRegion)
-   //    .def("computeFeatures", &AlleleSearcherLite::computeFeatures)
-   //    .def("computeFeaturesAdvanced", &AlleleSearcherLite::computeFeaturesAdvanced)
-   //    .def("addAlleleForAssembly", &AlleleSearcherLite::addAlleleForAssembly)
-   //    .def("clearAllelesForAssembly", &AlleleSearcherLite::clearAllelesForAssembly)
-   //    .def("computeFeaturesColored", &AlleleSearcherLite::computeFeaturesColored);
-    
    class_<AlleleSearcherLiteFiltered>("AlleleSearcherLite",
          init<
               const p::list&,
@@ -311,7 +112,6 @@ BOOST_PYTHON_MODULE(libCallability)
        .def_readwrite("deleteScore", &AlleleSearcherLiteFiltered::deleteScore)
        .def_readwrite("snvThreshold", &AlleleSearcherLiteFiltered::snvThreshold)
        .def_readwrite("indelThreshold", &AlleleSearcherLiteFiltered::indelThreshold)
-       .def("scoreLocations", &AlleleSearcherLiteFiltered::scoreLocations)
        .def("determineDifferingRegions", &AlleleSearcherLiteFiltered::determineDifferingRegions)
        .def("coverage", &AlleleSearcherLiteFiltered::coverage)
        .def("assemble", &AlleleSearcherLiteFiltered::assemble)
@@ -319,14 +119,7 @@ BOOST_PYTHON_MODULE(libCallability)
        .def("numReadsSupportingAlleleStrict", &AlleleSearcherLiteFiltered::numReadsSupportingAlleleStrict)
        .def("determineAllelesAtSite", &AlleleSearcherLiteFiltered::determineAllelesAtSite)
        .def("expandRegion", &AlleleSearcherLiteFiltered::expandRegion)
-       .def("computeFeatures", &AlleleSearcherLiteFiltered::computeFeatures)
-       .def("computeFeaturesAdvanced", &AlleleSearcherLiteFiltered::computeFeaturesAdvanced)
        .def("addAlleleForAssembly", &AlleleSearcherLiteFiltered::addAlleleForAssembly)
        .def("clearAllelesForAssembly", &AlleleSearcherLiteFiltered::clearAllelesForAssembly)
-       .def("computeFeaturesColored", &AlleleSearcherLiteFiltered::computeFeaturesColored)
        .def("computeFeaturesColoredSimple", &AlleleSearcherLiteFiltered::computeFeaturesColoredSimple);
-
-   // //boost::python::def("productConvolver", productConvolverWrapper);
-   // boost::python::class_<ProductConvolver>("ProductConvolver")
-   //     .def("productConvolution", &ProductConvolver::productConvolution);
 }

@@ -24,6 +24,7 @@
 #include <boost/functional/hash.hpp>
 #include <exception>
 #include "utils.h"
+#include "Read.h"
 
 #define CLEAR(data) if (!data.empty()) data.clear();
 
@@ -88,6 +89,7 @@ struct AlleleSearcherLiteFiltered
 {
     const static unordered_map<string, size_t> BASE_TO_INDEX;
     vector<string> reads;
+    vector<Read> read_objs;
     vector<bool> pacbio;
     vector<vector<size_t> > qualities;
     vector<size_t> referenceStarts;
@@ -111,14 +113,12 @@ struct AlleleSearcherLiteFiltered
     vector<string> filteredContigs;
     vector<Cigar> cigartuples;
     vector<AlignedPair> alignedPairs;
-    unordered_map<string, Mapping> supports;
-    unordered_map<string, Mapping> nonUniqueSupports;
+    // unordered_map<string, Mapping> supports;
+    // unordered_map<string, Mapping> nonUniqueSupports;
+    unordered_map<string, vector<size_t>> supports;
     size_t assemblyStart;
     size_t assemblyStop;
     // Items for advanced feature map creation
-    unordered_map<size_t, size_t> numItemsPerMatrixPosition;
-    unordered_map<size_t, size_t> ndarrayPositionToMatrixPosition;
-    unordered_map<size_t, size_t> matrixPositionToNdarrayStartPosition;
     size_t numTotalFeatureItems;
     bool useMapq;
     bool useOrientation;
@@ -161,14 +161,9 @@ struct AlleleSearcherLiteFiltered
     bool doesAlleleMeetQuality(size_t, size_t, size_t);
     void getAlignedPairs();
     bool isEmptyAlleleInCluster(size_t, size_t);
-    void scoreLocations();
     void determineDifferingRegions();
     void assemble(size_t, size_t, bool);
-    np::ndarray computeFeatures(const string&, size_t);
-    np::ndarray computeFeaturesAdvanced(const string&, size_t);
-    np::ndarray computeFeaturesColored(const string&, size_t);
     np::ndarray computeFeaturesColoredSimple(const string&, size_t, bool);
-    void computePositionMatrixParameters();
     size_t numReadsSupportingAllele(const string&);
     size_t numReadsSupportingAlleleStrict(const string&, bool);
     vector<string> determineAllelesAtSite(size_t, size_t);
@@ -186,6 +181,7 @@ struct AlleleSearcherLiteFiltered
     void addAlleleForAssembly(const string&);
     void clearAllelesForAssembly();
     void prepMatrix();
+    void prepReadObjs();
 
     AlleleSearcherLiteFiltered(
         const p::list& reads,
