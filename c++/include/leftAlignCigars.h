@@ -4,16 +4,9 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include "Reference.h"
 
 using namespace std;
-
-struct Reference
-{
-    const string refString;
-    const size_t leftPosition;
-    const char& operator[](size_t) const;
-    Reference(const string&, size_t);
-};
 
 bool indelInCigar(const vector<pair<size_t, size_t> >&);
 

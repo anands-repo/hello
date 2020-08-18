@@ -25,6 +25,7 @@
 #include <exception>
 #include "utils.h"
 #include "Read.h"
+#include "Reference.h"
 
 #define CLEAR(data) if (!data.empty()) data.clear();
 
@@ -82,6 +83,8 @@ struct AlleleSearcherLiteFiltered
     vector<int> orientation;
     size_t windowStart;
     size_t qThreshold;
+    size_t region_start;
+    size_t region_stop;
     string reference;
     unordered_set<string> alleles;
     vector<string> names;
@@ -93,16 +96,16 @@ struct AlleleSearcherLiteFiltered
     size_t maxAlleleSize;
     string refAllele;
     vector<pair<size_t, size_t> > differingRegions;
+    vector<pair<size_t, size_t> > differing_regions_i;
+    vector<pair<size_t, size_t> > differing_regions_p;
     vector<string> allelesAtSite;
     vector<string> filteredContigs;
     vector<Cigar> cigartuples;
     vector<AlignedPair> alignedPairs;
-    // unordered_map<string, Mapping> supports;
-    // unordered_map<string, Mapping> nonUniqueSupports;
     unordered_map<string, vector<size_t>> supports;
+    map<pair<long, long>, unordered_map<string, unordered_set<size_t>>> supports_in_region;
     size_t assemblyStart;
     size_t assemblyStop;
-    // Items for advanced feature map creation
     size_t numTotalFeatureItems;
     bool useMapq;
     bool useOrientation;
@@ -124,19 +127,27 @@ struct AlleleSearcherLiteFiltered
     int POSITION_MARKER_TRACK;
     float snvThreshold;
     float indelThreshold;
+    int num_pacbio_reads;
+    int num_illumina_reads;
+    long band_margin;
     size_t minCount;
     size_t minMapQ;
     unordered_set<string> allelesForAssembly;
-    vector<AlleleCounts> counts;
+    vector<AlleleCounts> counts_i;
+    vector<AlleleCounts> counts_p;
+    int min_depth_for_pacbio_realignment;
+    map<pair<long, long>, unordered_set<string>> alleles_in_regions;
+    size_t max_reassembly_region_size;
     
     void updateAlleleCounts();
     void listToQuality(const p::list& qualities);
     void listToCigar(const p::list& cigartuples);
-    void pushRegions(vector<size_t>&, vector<pair<size_t,size_t> >&);
+    void pushRegions(vector<size_t>&, vector<pair<size_t,size_t> >&, bool);
     bool isTrackEmpty(const size_t, const size_t, const size_t);
-    void getAlignedPairs();
-    void determineDifferingRegions();
-    void assemble(size_t, size_t, bool);
+    void determine_differing_regions_helper(const vector<AlleleCounts>&, set<long>&, long, long);
+    void cluster_differing_regions_helper(const set<long>&, vector<pair<size_t, size_t>>&, bool);
+    void determineDifferingRegions(bool);
+    void assemble(size_t, size_t);
     np::ndarray computeFeaturesColoredSimple(const string&, size_t, bool);
     size_t numReadsSupportingAllele(const string&);
     size_t numReadsSupportingAlleleStrict(const string&, bool);
@@ -149,8 +160,13 @@ struct AlleleSearcherLiteFiltered
     int PositionColor(size_t);
     void addAlleleForAssembly(const string&);
     void clearAllelesForAssembly();
-    void prepMatrix();
     void prepReadObjs();
+    void assemble_alleles_from_reads(bool);
+    void get_alleles_from_reads(
+        map<pair<long, long>, unordered_set<string>>&,
+        vector<Read*>&,
+        const vector<pair<size_t, size_t>>&
+    );
 
     AlleleSearcherLiteFiltered(
         const p::list& reads,
@@ -163,8 +179,9 @@ struct AlleleSearcherLiteFiltered
         const p::list& pacbio,
         const string& reference,
         size_t windowStart,
-        size_t qThreshold = 10,
-        bool leftAlign = false
+        size_t start,
+        size_t stop,
+        size_t qThreshold = 10
     );
         // Boost.Python places an upper limit of 15 arguments for the init function
         // https://www.boost.org/doc/libs/1_41_0/libs/python/doc/v2/configuration.html

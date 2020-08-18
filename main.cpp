@@ -101,6 +101,7 @@ BOOST_PYTHON_MODULE(libCallability)
               const string&,
               size_t,
               size_t,
+              size_t,
               bool
          >()
        )
@@ -113,6 +114,7 @@ BOOST_PYTHON_MODULE(libCallability)
        .def_readwrite("snvThreshold", &AlleleSearcherLiteFiltered::snvThreshold)
        .def_readwrite("indelThreshold", &AlleleSearcherLiteFiltered::indelThreshold)
        .def("determineDifferingRegions", &AlleleSearcherLiteFiltered::determineDifferingRegions)
+       .def("assemble_alleles_from_reads", &AlleleSearcherLiteFiltered::assemble_alleles_from_reads)
        .def("assemble", &AlleleSearcherLiteFiltered::assemble)
        .def("numReadsSupportingAllele", &AlleleSearcherLiteFiltered::numReadsSupportingAllele)
        .def("numReadsSupportingAlleleStrict", &AlleleSearcherLiteFiltered::numReadsSupportingAlleleStrict)

@@ -128,6 +128,7 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
         const auto& cigartuple = this->cigartuples[i];
         long rfcounter = long(this->referenceStarts[i]) - long(this->windowStart);
         long rdcounter = 0;
+        auto& counts = this->pacbio[i] ? this->counts_p: this->counts_i;
 
         if (this->mapq[i] < this->minMapQ) {
             continue;
@@ -136,7 +137,7 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
         assert(rfcounter > 0);
 
         // Quality control and allele addition function
-        auto addToCount = [] (
+        auto addToCount = [this] (
             AlleleCounts& count,
             const string& refAllele,
             const string& altAllele,
@@ -161,6 +162,8 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                 } else {
                     altCounts[allele] = increment;
                 }
+
+                DEBUG << "Updated altcount at position " << count.pos << " to value " << altCounts[allele] << ", ref, alt = " << refAllele << ", " << altAllele << ", refcount = " << count.refCount << ", total = " << count.total;
             }
         };
 
@@ -179,7 +182,7 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                 {
                     for (size_t j = 0; j < length; j++)
                     {
-                        auto& count = this->counts[rfcounter + j];
+                        auto& count = counts[rfcounter + j];
 
                         if (read[rdcounter + j] != this->reference[rfcounter + j]) {
                             string refAllele = this->reference.substr(rfcounter + j, 1);
@@ -210,7 +213,7 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                 case BAM_CDEL:
                 {
                     // Plant this on the location just before the deletion
-                    auto& count = this->counts[rfcounter - 1];
+                    auto& count = counts[rfcounter - 1];
                     string refAllele = this->reference.substr(rfcounter - 1, length + 1);
                     string readAllele = rdcounter > 0 ? read.substr(rdcounter - 1, 1) : this->reference.substr(rfcounter - 1, 1);
                     addToCount(
@@ -225,6 +228,8 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
                         false,
                         this->pacbio[i] ? 1: 2
                     );
+
+                    DEBUG << "Updating deletion allele at " << count.pos;
                 }
                 case BAM_CREF_SKIP:
                 {
@@ -234,7 +239,7 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
 
                 case BAM_CINS:
                 {
-                    auto& count = this->counts[rfcounter - 1];
+                    auto& count = counts[rfcounter - 1];
                     string refAllele = this->reference.substr(rfcounter - 1, 1);
 
                     if (cigarcount == 0) {
@@ -306,72 +311,6 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
     DEBUG << "Completed updating allele counts";
 }
 
-// Determine aligned pairs for all reads
-void AlleleSearcherLiteFiltered::getAlignedPairs()
-{
-    size_t i = 0;
-
-    for (auto& cigartuple : this->cigartuples)
-    {
-        size_t rdcounter = 0;
-        size_t rfcounter = this->referenceStarts[i];
-        AlignedPair alignedPair;
-
-        for (auto& cigar : cigartuple)
-        {
-            size_t operation = cigar.first;
-            size_t length    = cigar.second;
-
-            switch(operation)
-            {
-                case BAM_CSOFT_CLIP:
-                {
-                    rdcounter += length;
-                    break;
-                }
-                case BAM_CEQUAL:
-                case BAM_CDIFF:
-                case BAM_CMATCH:
-                {
-                    for (size_t j = 0; j < length; j++)
-                    {
-                        pair<long,long> entry(rdcounter+j,rfcounter+j);
-                        alignedPair.emplace_back(move(entry));
-                    }
-                    rdcounter += length;
-                    rfcounter += length;
-                    break;
-                }
-                case BAM_CDEL:
-                case BAM_CREF_SKIP:
-                {
-                    for (size_t j = 0; j < length; j++)
-                    {
-                        pair<long,long> entry(-1,rfcounter+j);
-                        alignedPair.emplace_back(move(entry));
-                    }
-                    rfcounter += length;
-                    break;
-                }
-                case BAM_CINS:
-                {
-                    for (size_t j = 0; j < length; j++)
-                    {
-                        pair<long,long> entry(rdcounter+j,-1);
-                        alignedPair.emplace_back(move(entry));
-                    }
-                    rdcounter += length;
-                    break;
-                }
-                default: break;
-            } //switch
-        } // for
-
-        this->alignedPairs.emplace_back(move(alignedPair));
-        i++;
-    }
-}
-
 void AlleleSearcherLiteFiltered::listToCigar(const p::list& cigartuples)
 {
     for (size_t i = 0; i < len(cigartuples); i++)
@@ -401,8 +340,9 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     const p::list& pacbio,
     const string& reference,
     size_t windowStart,
-    size_t qThreshold,
-    bool leftAlign
+    size_t start,
+    size_t stop,
+    size_t qThreshold
 ) :
     reads(strListToVector(reads)),
     pacbio(LIST_TO_BOOL_VECTOR(pacbio)),
@@ -438,8 +378,19 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     indelThreshold(0.12),
     minCount(2),
     minMapQ(10),
-    maxAlleleSize(100)
+    maxAlleleSize(100),
+    num_pacbio_reads(0),
+    num_illumina_reads(0),
+    min_depth_for_pacbio_realignment(20),
+    band_margin(6),
+    region_start(start),
+    region_stop(stop),
+    max_reassembly_region_size(10)
 {
+    bool leftAlign = false;
+
+    DEBUG << "Creating searcher C++ object with " << this->reads.size() << " reads";
+
     // Quality to probability for fast computation
     for (size_t q = 0; q < 100; q++)
     {
@@ -466,24 +417,37 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
                 refObj,
                 true        // Set indelRealigned as "true"
             );
+
+            if (this->pacbio[i]) num_pacbio_reads++;
+            if (!this->pacbio[i]) num_illumina_reads++;
         }
     }
 
     // Initialize allele count object
     for (size_t i = 0; i < this->reference.size(); i++)
     {
-        AlleleCounts count;
-        count.refCount = 0;
-        count.pos = i + this->windowStart;
-        count.total = 0;
-        this->counts.emplace_back(move(count));
+        AlleleCounts count_i;
+        AlleleCounts count_p;
+        count_i.refCount = 0;
+        count_i.pos = i + this->windowStart;
+        count_i.total = 0;
+        count_p.refCount = 0;
+        count_p.pos = i + this->windowStart;
+        count_p.total = 0;
+        this->counts_i.emplace_back(move(count_i));
+        this->counts_p.emplace_back(move(count_p));
     }
 
     // Update all allele counts
     this->updateAlleleCounts();
 
     // Resolve partial counts
-    for (auto& count : this->counts) {
+    for (auto& count : this->counts_i) {
+        count.resolvePartials();
+    }
+
+    // Resolve partial counts
+    for (auto& count : this->counts_p) {
         count.resolvePartials();
     }
 }
@@ -498,8 +462,10 @@ void AlleleSearcherLiteFiltered::prepReadObjs() {
         const auto& ref_start = this->referenceStarts[i];
         const auto& pacbio = this->pacbio[i];
         const auto& mapq = this->mapq[i];
+        const auto& name = this->names[i];
         Read readobj(
             read,
+            name,
             quality,
             cigar,
             ref_start,
@@ -513,66 +479,39 @@ void AlleleSearcherLiteFiltered::prepReadObjs() {
 
 // Push a cluster of alleles into regions, but make sure there are no empty alleles at the start or stop
 // position of the cluster. If there is, shift the cluster end-points
-void AlleleSearcherLiteFiltered::pushRegions(vector<size_t>& cluster, vector<pair<size_t,size_t> >& regions)
-{
+void AlleleSearcherLiteFiltered::pushRegions(
+    vector<size_t>& cluster, vector<pair<size_t,size_t> >& regions, bool strict
+) {
     pair<size_t,size_t> region;
     region.first  = cluster.front();
     region.second = cluster.back() + 1;
-    bool flag = true;
 
-    regions.push_back(region);
-    cluster.clear();
-}
+    DEBUG << "Received region " << region.first << ", " << region.second;
 
-void AlleleSearcherLiteFiltered::determineDifferingRegions()
-{
-    CLEAR(this->differingRegions)
-
-    set<long> differingLocations;
-
-    DEBUG << "Determining differing regions with snv threshold = " << this->snvThreshold << " , indel threshold = " << this->indelThreshold;
-
-    // Go through allele counts and push each marked position
-    for (auto& item: this->counts) {
-        // There may be sites that are completely
-        // spanned by homozygous deletions. Skip them.
-        if (item.total == 0) {
-            continue;
-        }
-
-        for (auto& count: item.altCounts) {
-            float value = count.second;
-            auto& key = count.first;
-            auto& refBase = key.first;
-            auto& altBase = key.second;
-
-            if ((refBase.size() == 1) && (altBase.size() == 1)) {
-                // SNV threshold
-                if ((value / item.total >= this->snvThreshold) && (value >= this->minCount)) {
-                    differingLocations.insert(item.pos);
-                }
-            } else {
-                // Only use alleles of small size
-                if (max(refBase.size(), altBase.size()) > this->maxAlleleSize) continue;
-
-                if ((value / item.total >= this->indelThreshold) && (value >= this->minCount)) {
-                    // Add all bases from the left-flanking base to the right
-                    // flanking base of the indel
-                    long start = item.pos;
-                    long stop = start + refBase.size() + 1;
-
-                    for (long i = start; i < stop; i ++) {
-                        differingLocations.insert(i);
-                    }
-                }
-            }
+    // Strict requires only those regions to be pushed which are
+    // completely within the searcher regions
+    if (strict) {
+        if ((region.first < this->region_start) || (region.second > this->region_stop)) {
+            DEBUG << "Discarding region";
+            cluster.clear();
+            return;
         }
     }
 
+    regions.push_back(region);
+    cluster.clear();
+    DEBUG << "Pushing region " << regions.back().first << ", " << regions.back().second;
+}
+
+void AlleleSearcherLiteFiltered::cluster_differing_regions_helper(
+    const set<long>& differing_locations,
+    vector<pair<size_t, size_t>>& differing_regions,
+    bool strict
+) {
     // Collect consecutive locations that are affected into a cluster
     vector<size_t> cluster;
 
-    for (auto& location : differingLocations) {
+    for (auto& location : differing_locations) {
         if (cluster.empty()) {
             cluster.push_back(location);
         }
@@ -583,41 +522,311 @@ void AlleleSearcherLiteFiltered::determineDifferingRegions()
             }
             else
             {
-                this->pushRegions(cluster, this->differingRegions);
+                this->pushRegions(cluster, differing_regions, strict);
                 cluster.push_back(location);
             }
         }
     }
 
     if (!cluster.empty()) {
-        this->pushRegions(cluster, this->differingRegions);
+        this->pushRegions(cluster, differing_regions, strict);
+    }
+}
+
+void AlleleSearcherLiteFiltered::determineDifferingRegions(bool strict) {
+    CLEAR(this->differingRegions)
+    CLEAR(this->differing_regions_i)
+    CLEAR(this->differing_regions_p)
+    set<long> differing_locations_i;
+    set<long> differing_locations_p;
+    set<long> differing_locations;
+
+    if ((num_illumina_reads > 0) && (num_pacbio_reads == 0)) {
+        this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
+        cluster_differing_regions_helper(differing_locations_i, differing_regions_i, strict);
+    } else if ((num_pacbio_reads > 0) && (num_illumina_reads == 0)) {
+        this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
+        cluster_differing_regions_helper(differing_locations_p, differing_regions_p, strict);
+    } else {
+        this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
+        this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
+        cluster_differing_regions_helper(differing_locations_i, differing_regions_i, strict);
+        cluster_differing_regions_helper(differing_locations_p, differing_regions_p, strict);
+    }
+
+    std::set_union(
+        differing_locations_i.begin(), differing_locations_i.end(),
+        differing_locations_p.begin(), differing_locations_p.end(),
+        std::inserter(differing_locations, differing_locations.begin())
+    );
+    cluster_differing_regions_helper(differing_locations, this->differingRegions, strict);
+
+    for (auto& item: differingRegions) {
+        DEBUG << "Found differing region " << item.first << ", " << item.second;
+    }
+}
+
+void AlleleSearcherLiteFiltered::get_alleles_from_reads(
+    map<pair<long, long>, unordered_set<string>>& alleles,
+    vector<Read*>& read_objects,
+    const vector<pair<size_t, size_t> >& differing_regions
+) {
+    for (auto& read_object: read_objects) {
+        for (auto& record: read_object->alleles) {
+            if (
+                (record.min_q >= this->qThreshold) &&
+                (read_object->mapq >= this->minMapQ) &&
+                (record.allele.find("N") == string::npos)
+            ) {
+                alleles[
+                    pair<long, long>(record.start, record.stop)
+                ].insert(record.allele);
+            }
+        }
+    }
+}
+
+void AlleleSearcherLiteFiltered::assemble_alleles_from_reads(bool reassemble) {
+    this->prepReadObjs();
+
+    DEBUG << "Prepared read objects, beginning assembly for region";
+
+    // Create reference object
+    Reference ref(this->reference, this->windowStart);
+
+    DEBUG << "Number of differing regions = " << this->differingRegions.size();
+
+    if (this->differingRegions.empty()) return;
+
+    // Find the minimum location and maximum location from
+    // differing regions
+    long start = this->differingRegions.front().first - this->band_margin;
+    long stop = this->differingRegions.back().second + this->band_margin;
+
+    DEBUG << "Assembly regions will be between " << start << " and " << stop;
+
+    vector<Read*> read_objects;
+
+    for (auto& read_obj: this->read_objs) {
+        read_obj.extract_alleles(differingRegions);
+    }
+
+    DEBUG << "Prepared supporting alleles from every read";
+
+    if ((reassemble) && (this->differingRegions.size() < max_reassembly_region_size)) {
+        DEBUG << "Performing reassembly of Pacbio reads with " << differingRegions.size() << " locations";
+
+        map<pair<long, long>, unordered_set<string>> i_alleles;
+
+        for (auto& read_obj: this->read_objs) {
+            if (!read_obj.pacbio) read_objects.push_back(&read_obj);
+        }
+
+        get_alleles_from_reads(
+            i_alleles,
+            read_objects,
+            this->differingRegions
+        );
+
+        // Build these Illumina alleles into a vector of Site records
+        vector<SiteRecord> sites;
+
+        for (auto& item: i_alleles) {
+            vector<string> allele_strings(
+                item.second.begin(),
+                item.second.end()
+            );
+            SiteRecord s(
+                allele_strings,
+                item.first.first,
+                item.first.second
+            );
+            sites.emplace_back(move(s));
+        }
+
+        // Obtain all potential haplotype combinations between start and stop
+        // and corresponding Illumina allelic records
+        unordered_map<string, vector<AllelicRecord>> result;
+        enumerate_all_haplotypes(sites, ref, start, stop, result);
+
+        for (auto& read_obj: this->read_objs) {
+            if (read_obj.pacbio) {
+                read_obj.update_allelic_records(ref, result, start, stop);
+            }
+        }
+
+        DEBUG << "Completed pacbio reassembly";
+    }
+
+    DEBUG << "Computing supported alleles in differing regions";
+
+    // Recompute alleles from all reads
+    read_objects.clear();
+    alleles_in_regions.clear();
+    for (auto& obj: this->read_objs) {
+        read_objects.push_back(&obj);
+    }
+    get_alleles_from_reads(
+        alleles_in_regions,
+        read_objects,
+        this->differingRegions
+    );
+
+    // // Create an allele map in each read
+    // for (auto& read_obj: this->read_objs) {
+    //     read_obj.create_allele_map();
+    // }
+
+    DEBUG << "Final stage of assembly commencing";
+
+    // Find reads which map to each allele
+    // in each differing region, and record
+    // their support
+    for (auto& read_obj: this->read_objs) {
+        for (auto& record: read_obj.alleles) {
+            if ((read_obj.mapq >= this->minMapQ) && (record.min_q >= this->qThreshold)) {
+                supports_in_region[
+                    pair<long, long>(record.start, record.stop)
+                ][record.allele].insert(read_obj.read_id);
+                DEBUG << "For location " << record.start << ", " << record.stop << " found allele " << record.allele << " from read " << read_obj.name;
+            }
+        }
+    }
+
+    // Helper functions for determining partial supports
+    auto check_left_partial = [](const string& partial, const string& full) -> bool {
+        if (full.size() < partial.size()) return false;
+        return (full.substr(full.size() - partial.size(), partial.size()) == partial);
+    };
+
+    auto check_right_partial = [](const string& partial, const string& full) -> bool {
+        if (full.size() < partial.size()) return false;
+        return (full.substr(0, partial.size()) == partial);
+    };
+
+    auto get_matching_alleles = [check_left_partial, check_right_partial](
+        const string& partial,
+        const pair<long, long>& location,
+        map<pair<long, long>, unordered_map<string, unordered_set<size_t>>>& support_items,
+        bool left
+    ) {
+        unordered_set<string> match_set;
+
+        if (support_items.find(location) != support_items.end()) {
+            const auto& supported_alleles = support_items[location];
+
+            for (auto& full_allele_set: supported_alleles) {
+                bool flag;
+
+                if (left) flag = check_left_partial(partial, full_allele_set.first);
+                else flag = check_right_partial(partial, full_allele_set.first);
+
+                if (flag) match_set.insert(full_allele_set.first);
+            }
+        }
+
+        return match_set;
+    };
+
+    // Determine partial supports
+    for (auto& read_obj: this->read_objs) {
+        if (read_obj.has_left_partial) {
+            const auto& lallele = read_obj.left_partial;
+            pair<long, long> key(lallele.start, lallele.stop);
+            const string& partial = lallele.allele;
+            auto match_set = get_matching_alleles(partial, key, this->supports_in_region, true);
+            if (match_set.size() == 1) {
+                supports_in_region[key][*match_set.begin()].insert(read_obj.read_id);
+            }
+        } else if (read_obj.has_right_partial) {
+            const auto& rallele = read_obj.right_partial;
+            pair<long, long> key(rallele.start, rallele.stop);
+            const string& partial = rallele.allele;
+            auto match_set = get_matching_alleles(partial, key, this->supports_in_region, false);
+            if (match_set.size() == 1) {
+                supports_in_region[key][*match_set.begin()].insert(read_obj.read_id);
+            }
+        }
+    }
+}
+
+void AlleleSearcherLiteFiltered::determine_differing_regions_helper(
+    const vector<AlleleCounts>& counts,
+    set<long>& differingLocations,
+    long min_count_snv,
+    long min_count_indel
+) {
+    // set<long> differingLocations;
+
+    DEBUG << "Determining differing regions with snv threshold = " << this->snvThreshold << " , indel threshold = " << this->indelThreshold;
+
+    // Go through allele counts and push each marked position
+    for (auto& item: counts) {
+        // There may be sites that are completely
+        // spanned by homozygous deletions. Skip them.
+        if (item.total == 0) {
+            continue;
+            DEBUG << "Location " << item.pos << " has no reads";
+        }
+
+        for (auto& count: item.altCounts) {
+            float value = count.second;
+            auto& key = count.first;
+            auto& refBase = key.first;
+            auto& altBase = key.second;
+
+            if ((refBase.size() == 1) && (altBase.size() == 1)) {
+                // SNV threshold
+                if ((value / item.total >= this->snvThreshold) && (value >= min_count_snv)) {
+                    differingLocations.insert(item.pos);
+                }
+            } else {
+                // Only use alleles of small size
+                if (max(refBase.size(), altBase.size()) > this->maxAlleleSize) continue;
+
+                DEBUG << "Position = " << item.pos << ", altcount, total = " << value << ", " << item.total;
+
+                if ((value / item.total >= this->indelThreshold) && (value >= min_count_indel)) {
+                    DEBUG << "yes";
+
+                    // Add all bases from the left-flanking base to the right
+                    // flanking base of the indel
+                    long start = item.pos;
+                    long stop = start + refBase.size() + 1;
+
+                    for (long i = start; i < stop; i ++) {
+                        differingLocations.insert(i);
+                        DEBUG << "here";
+                    }
+                } else {
+                    DEBUG << "no";
+                }
+            }
+        }
     }
 }
 
 // A utility function to obtain all alleles at a site
 vector<string> AlleleSearcherLiteFiltered::determineAllelesAtSite(size_t start_, size_t stop_)
 {
-    this->prepReadObjs();
+    vector<string> allelesInRegion;
 
-    unordered_set<string> alleleSet;
+    pair<long, long> site(start_, stop_);
 
-    for (const auto& read_obj: this->read_objs) {
-        auto result = read_obj.get_aligned_bases(start_, stop_);
-        if (result.second != AlignedBaseStatus::Success) continue;
-        if (result.third < this->qThreshold) continue;
-        if (result.first.find("N") != string::npos) continue;
-        if (read_obj.mapq < this->minMapQ) continue;
-        alleleSet.insert(result.first);
+    if (alleles_in_regions.find(site) != alleles_in_regions.end()) {
+        allelesInRegion.insert(
+            allelesInRegion.end(),
+            alleles_in_regions[site].begin(),
+            alleles_in_regions[site].end()
+        );
     }
-
-    vector<string> allelesInRegion(alleleSet.begin(), alleleSet.end());
 
     return allelesInRegion;
 }
 
 void AlleleSearcherLiteFiltered::addAlleleForAssembly(const string& allele)
 {
-    this->allelesForAssembly.insert(allele);    
+    this->allelesForAssembly.insert(allele);
 }
 
 void AlleleSearcherLiteFiltered::clearAllelesForAssembly()
@@ -626,128 +835,28 @@ void AlleleSearcherLiteFiltered::clearAllelesForAssembly()
 }
 
 /* Determine supporting reads */
-void AlleleSearcherLiteFiltered::assemble(size_t start_, size_t stop_, bool noFilter)
+void AlleleSearcherLiteFiltered::assemble(size_t start_, size_t stop_)
 {
-    this->prepReadObjs();
+    this->supports.clear();
 
-    DEBUG << "Assembling between " << start_ << " (inclusive) and " << stop_;
+    pair<long, long> site(start_, stop_);
 
-    CLEAR(this->allelesAtSite)
-    CLEAR(this->refAllele)
-    CLEAR(this->supports)
+    if (supports_in_region.find(site) != supports_in_region.end()) {
+        const auto& support_map = supports_in_region[site];
 
-    unordered_map<string, vector<size_t>> partial_supports_left;
-    unordered_map<string, vector<size_t>> partial_supports_right;
-
-    this->refAllele = this->reference.substr(start_ - this->windowStart, stop_ - start_);
-
-    if (this->allelesForAssembly.empty()) {
-        DEBUG << "Alleles for assembly not provided, determining alleles for assembly";
-        auto alleles = this->determineAllelesAtSite(start_, stop_);
-        this->allelesAtSite.insert(
-            this->allelesAtSite.end(), alleles.begin(), alleles.end()
-        );
-    } else {
-        DEBUG << "Using the provided alleles for assembly";
-        this->allelesAtSite.insert(
-            this->allelesAtSite.end(), this->allelesForAssembly.begin(), this->allelesForAssembly.end()
-        );
-    }
-
-    unordered_set<string> allelesForAssembly(this->allelesAtSite.begin(), this->allelesAtSite.end());
-
-    // Bucketize reads
-    for (auto& read_obj: this->read_objs) {
-        if (read_obj.mapq < this->minMapQ) continue;
-
-        auto result = read_obj.get_aligned_bases(start_, stop_);
-
-        switch(result.second) {
-            case AlignedBaseStatus::Success: {
-                if (allelesForAssembly.find(result.first) != allelesForAssembly.end()) {
-                    this->supports[result.first].push_back(read_obj.read_id);
-                }
-                break;
-            }
-            case AlignedBaseStatus::LeftPartial: {
-                partial_supports_left[result.first].push_back(read_obj.read_id);
-                break;
-            }
-            case AlignedBaseStatus::RightPartial: {
-                partial_supports_right[result.first].push_back(read_obj.read_id);
-                break;
-            }
-            default: continue;
-        }
-    }
-
-    // Resolve partials
-    auto get_partial_to_full_allele_maps = [](
-        const unordered_map<string, vector<size_t>>& partial_map,
-        const unordered_map<string, vector<size_t>>& full_map,
-        unordered_map<string, string>& resolution_map,
-        bool left
-    ) {
-        unordered_map<string, unordered_set<string>> resolution_map_preliminary;
-
-        // Get all full alleles to which a partial allele is a (partial) match
-        for (auto& partial_item: partial_map) {
-            const string& partial_allele = partial_item.first;
-
-            for (auto& full_support_item: full_map) {
-                const string& full_allele = full_support_item.first;
-
-                if (full_allele.size() < partial_allele.size()) continue;
-
-                string substr = left ? full_allele.substr(
-                    full_allele.size() - partial_allele.size(),
-                    partial_allele.size()
-                ) : full_allele.substr(0, partial_allele.size());
-
-                if (substr == partial_allele) {
-                    resolution_map_preliminary[partial_allele].insert(full_allele);
-                }
-            }
-        }
-
-        // Only maintain those partial alleles which have a single match
-        for (auto& preliminary_resolution: resolution_map_preliminary) {
-            if (preliminary_resolution.second.size() == 1) {
-                resolution_map[preliminary_resolution.first] = *preliminary_resolution.second.begin();
-            }
-        }
-    };
-
-    auto push_partial_to_full = [](
-        unordered_map<string, string>& partial_to_full_resolution,
-        unordered_map<string, vector<size_t>>& full_map,
-        unordered_map<string, vector<size_t>>& partial_map
-    ) {
-        for (auto& partial_map_item: partial_to_full_resolution) {
-            const string& partial_allele = partial_map_item.first;
-            const string& full_allele = partial_map_item.second;
-            full_map[full_allele].insert(
-                full_map[full_allele].end(),
-                partial_map[partial_allele].begin(),
-                partial_map[partial_allele].end()
+        for (auto& item: support_map) {
+            vector<size_t> supporting_reads;
+            supporting_reads.insert(
+                supporting_reads.end(),
+                item.second.begin(),
+                item.second.end()
             );
+            this->supports[item.first] = supporting_reads;
         }
-    };
+    }
 
-    // Resolve left partials
-    unordered_map<string, string> partial_to_full_allele_maps;
-    get_partial_to_full_allele_maps(partial_supports_left, this->supports, partial_to_full_allele_maps, true);
-    push_partial_to_full(partial_to_full_allele_maps, this->supports, partial_supports_left);
-
-    // Resolve right partials
-    partial_to_full_allele_maps.clear();
-    get_partial_to_full_allele_maps(partial_supports_right, this->supports, partial_to_full_allele_maps, false);
-    push_partial_to_full(partial_to_full_allele_maps, this->supports, partial_supports_right);
-
-    for (auto& item: supports) {
-        for (auto& read: item.second) {
-            DEBUG << "Read " << read << " supports allele " << item.first;
-        }
+    for (auto& item: this->supports) {
+        this->allelesAtSite.push_back(item.first);
     }
 
     this->assemblyStart = start_;
@@ -758,9 +867,8 @@ void AlleleSearcherLiteFiltered::assemble(size_t start_, size_t stop_, bool noFi
 
 size_t AlleleSearcherLiteFiltered::numReadsSupportingAllele(const string& allele)
 {
+    // Note: this call is deprecated
     size_t num = 0;
-    if (this->supports.find(allele) != this->supports.end()) num += this->supports.find(allele)->second.size();
-    // if (this->nonUniqueSupports.find(allele) != this->nonUniqueSupports.end()) num += this->nonUniqueSupports.find(allele)->second.size();
     return num;
 }
 

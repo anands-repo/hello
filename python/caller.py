@@ -609,7 +609,7 @@ if __name__ == "__main__":
         provideSearchers=args.reuseSearchers,
     );
 
-    logging.info("Obtained hotspots");
+    logging.info("Obtained %d hotspots" % len(hotspots));
 
     # Generate data, and either dump to disk, or call variants
     datagen = trainDataTools.data(

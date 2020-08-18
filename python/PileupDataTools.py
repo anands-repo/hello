@@ -13,19 +13,19 @@ import copy
 import pysam
 from timeit import default_timer as timer
 
-READ_RATE_ILLUMINA = (1000, 30);
-READ_RATE_PACBIO = (100, 100);
-MIN_DISTANCE = 13;
-CHRPREFIX1 = "";
-CHRPREFIX2 = "";
-FLANKING_BASES = 75;
-CANDIDATE_READER_TIME = 0;
+READ_RATE_ILLUMINA = (1000, 30)
+READ_RATE_PACBIO = (100, 100)
+MIN_DISTANCE = 13
+CHRPREFIX1 = ""
+CHRPREFIX2 = ""
+FLANKING_BASES = 75
+CANDIDATE_READER_TIME = 0
 
 try:
     profile
 except Exception:
     def profile(_):
-        return _;
+        return _
 
 
 class SearcherFactory:
@@ -51,12 +51,12 @@ class SearcherFactory:
         :param clr: bool
             Whether the read type is CLR for pacbio reads
         """
-        self.featureLength = featureLength;
-        self.pacbio = pacbio;
-        self.useInternalLeftAlignment = useInternalLeftAlignment;
-        self.noAlleleLevelFilter = noAlleleLevelFilter or (clr and pacbio);
-        self.clr = clr;
-        self.ref = ReferenceCache(database=ref);
+        self.featureLength = featureLength
+        self.pacbio = pacbio
+        self.useInternalLeftAlignment = useInternalLeftAlignment
+        self.noAlleleLevelFilter = noAlleleLevelFilter or (clr and pacbio)
+        self.clr = clr
+        self.ref = ReferenceCache(database=ref)
 
     def __call__(self, container, start, stop):
         """
@@ -78,27 +78,27 @@ class SearcherFactory:
             pacbio=self.pacbio,
             useInternalLeftAlignment=self.useInternalLeftAlignment,
             noAlleleLevelFilter=self.noAlleleLevelFilter,
-        );
+        )
 
 
 class ReadSampler:
     def __init__(self, bamfile, readRate, chrPrefix, pacbio, noClip=False, prorateReadsToRetain=True):
-        self.readRate = readRate;
-        self.chrPrefix = chrPrefix;
-        self.pacbio = pacbio;
-        self.bamfile = bamfile;
-        self.bhandle = pysam.AlignmentFile(bamfile, 'rb');
-        self.noClip = noClip;
-        self.prorateReads = prorateReadsToRetain;
+        self.readRate = readRate
+        self.chrPrefix = chrPrefix
+        self.pacbio = pacbio
+        self.bamfile = bamfile
+        self.bhandle = pysam.AlignmentFile(bamfile, 'rb')
+        self.noClip = noClip
+        self.prorateReads = prorateReadsToRetain
 
     def __call__(self, chromosome, start, stop):
         if self.prorateReads:
             if stop - start > self.readRate[1]:
-                numReadsToRetain = self.readRate[0] / self.readRate[1] * (stop - start);
+                numReadsToRetain = self.readRate[0] / self.readRate[1] * (stop - start)
             else:
-                numReadsToRetain = self.readRate[0];
+                numReadsToRetain = self.readRate[0]
         else:
-            numReadsToRetain = self.readRate;
+            numReadsToRetain = self.readRate
 
         container = PileupContainerLite(
             self.bhandle,
@@ -108,9 +108,9 @@ class ReadSampler:
             clipReads=(self.pacbio and not self.noClip),
             maxNumReads=numReadsToRetain,
             clipFlank=200,
-        );
+        )
 
-        return container;
+        return container
 
 
 def measureDistance(pointA, pointB):
@@ -127,14 +127,14 @@ def measureDistance(pointA, pointB):
         Distance
     """
     if (pointA['chromosome'] != pointB['chromosome']):
-        distance = float('inf');
+        distance = float('inf')
 
     if ('position' in pointA) and ('position' in pointB):
-        return pointB['position'] - pointA['position'];
+        return pointB['position'] - pointA['position']
     elif ('start' in pointB) and ('stop' in pointA):
-        return pointB['start'] - pointA['stop'] + 1;
+        return pointB['start'] - pointA['stop'] + 1
     else:
-        raise ValueError("Bad arguments " + str(pointA) + ", " + str(pointB));
+        raise ValueError("Bad arguments " + str(pointA) + ", " + str(pointB))
 
 
 def isWithinDistance(pointA, pointB, distance=MIN_DISTANCE):
@@ -154,9 +154,9 @@ def isWithinDistance(pointA, pointB, distance=MIN_DISTANCE):
         The status of the comparison
     """
     if 0 <= measureDistance(pointA, pointB) <= distance:
-        return True;
+        return True
 
-    return False;
+    return False
 
 
 def hotspotsReader(filename, distance=MIN_DISTANCE):
@@ -174,29 +174,29 @@ def hotspotsReader(filename, distance=MIN_DISTANCE):
         Iterator
     """
     with open(filename, 'r') as fhandle:
-        cluster = [];
+        cluster = []
 
         for line in fhandle:
-            point = ast.literal_eval(line);
+            point = ast.literal_eval(line)
             if len(cluster) == 0:
-                cluster.append(point);
+                cluster.append(point)
             else:
                 if isWithinDistance(cluster[-1], point, distance=distance):
-                    cluster.append(point);
+                    cluster.append(point)
                 else:
                     yield {
                         'chromosome': cluster[0]['chromosome'],
                         'start': cluster[0]['position'] - distance // 2,
                         'stop': cluster[-1]['position'] + distance // 2
-                    };
-                    cluster = [point];
+                    }
+                    cluster = [point]
 
         if len(cluster) != 0:
             yield {
                 'chromosome': cluster[0]['chromosome'],
                 'start': cluster[0]['position'] - distance // 2,
                 'stop': cluster[-1]['position'] + distance // 2
-            };
+            }
 
 
 def diffIntervals(a, b):
@@ -212,9 +212,9 @@ def diffIntervals(a, b):
     :return: bool
         Whether intervals are different or not
     """
-    a_ = set((x, y) for x, y, _ in a);
-    b_ = set((x, y) for x, y, _ in b);
-    return a_ == b_;
+    a_ = set((x, y) for x, y, _ in a)
+    b_ = set((x, y) for x, y, _ in b)
+    return a_ == b_
 
 
 def obtainConsensusRegions(searchers):
@@ -227,30 +227,30 @@ def obtainConsensusRegions(searchers):
     :return: intervaltree.IntervalTree
         Consensus intervals
     """
-    intervals = intervaltree.IntervalTree();
+    intervals = intervaltree.IntervalTree()
 
     for searcher in searchers:
         intervals.update(
             [intervaltree.Interval(*x) for x in searcher.differingRegions]
-        );
+        )
 
-    intervals.merge_overlaps();
+    intervals.merge_overlaps()
 
     while True:
-        allIntervals = copy.deepcopy(intervals.all_intervals);
+        allIntervals = copy.deepcopy(intervals.all_intervals)
 
         for x, y, _ in allIntervals:
             for searcher in searchers:
-                expandedRegion = searcher.expandRegion(x, y);
-                intervals.addi(expandedRegion[0], expandedRegion[1], None);
+                expandedRegion = searcher.expandRegion(x, y)
+                intervals.addi(expandedRegion[0], expandedRegion[1], None)
 
-        intervals.merge_overlaps();
+        intervals.merge_overlaps()
 
         # If intervals have stopped changing, return
         if diffIntervals(allIntervals, intervals.all_intervals):
-            break;
+            break
 
-    return intervals;
+    return intervals
 
 
 @profile
@@ -287,54 +287,54 @@ def candidateReader(
         tuple of collections.defaultdict indicating all the hotspots
         and searchers constructed
     """
-    execStart = timer();
-    hotspotIterator = hotspotsReader(activity, distance);
-    hotspots = collections.defaultdict(intervaltree.IntervalTree);
-    searcherCollection = None;
+    execStart = timer()
+    hotspotIterator = hotspotsReader(activity, distance)
+    hotspots = collections.defaultdict(intervaltree.IntervalTree)
+    searcherCollection = None
 
     if provideSearchers:
-        searcherCollection = collections.defaultdict(intervaltree.IntervalTree);
+        searcherCollection = collections.defaultdict(intervaltree.IntervalTree)
 
     for i, item in enumerate(hotspotIterator):
-        chromosome, start, stop = item['chromosome'], item['start'], item['stop'];
-        searchers = [];
+        chromosome, start, stop = item['chromosome'], item['start'], item['stop']
+        searchers = []
 
         try:
             containers = [
                 rS(chromosome, max(0, start - FLANKING_BASES), stop + FLANKING_BASES)
                 for rS in readSamplers
-            ];
+            ]
             searcher = searcherFactory(containers, start, stop)
 
-            logging.debug("Constructed searcher for span %d, %d" % (start, stop));
+            logging.debug("Constructed searcher for span %d, %d" % (start, stop))
 
             if provideSearchers:
-                searcherCollection[chromosome].addi(start, stop, searcher);
+                searcherCollection[chromosome].addi(start, stop, searcher)
         except LocationOutOfBounds:
-            logging.warning("Location %s, %d, %d is out of bounds" % (chromosome, start, stop));
-            continue;
+            logging.warning("Location %s, %d, %d is out of bounds" % (chromosome, start, stop))
+            continue
 
-        differingRegions = searcher.differingRegions;
+        differingRegions = searcher.differingRegions
         for x, y in differingRegions:
-            hotspots[chromosome].addi(x, y, None);
+            hotspots[chromosome].addi(x, y, None)
 
         # NOTE: With the merged AlleleSearcher model, there is no need to obtain a consensus anymore
         # if not searcher.hybrid:
-        #     differingRegions = searcher.differingRegions;
+        #     differingRegions = searcher.differingRegions
         #     for x, y in differingRegions:
-        #         hotspots[chromosome].addi(x, y, None);
+        #         hotspots[chromosome].addi(x, y, None)
         # else:
-        #     hotspots[chromosome].update(obtainConsensusRegions(searchers));
+        #     hotspots[chromosome].update(obtainConsensusRegions(searchers))
 
         if (i + 1) % 100 == 0:
-            logging.info("Completed %d hotspot items" % (i + 1));
+            logging.info("Completed %d hotspot items" % (i + 1))
 
     for key in hotspots:
-        hotspots[key].merge_overlaps();
+        hotspots[key].merge_overlaps()
 
-    execStop = timer();
+    execStop = timer()
 
-    global CANDIDATE_READER_TIME;
-    CANDIDATE_READER_TIME += (execStop - execStart);
+    global CANDIDATE_READER_TIME
+    CANDIDATE_READER_TIME += (execStop - execStart)
 
-    return hotspots, searcherCollection;
+    return hotspots, searcherCollection
