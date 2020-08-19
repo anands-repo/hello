@@ -16,6 +16,7 @@ CHUNK_SIZE_ILLUMINA = 400
 CHUNK_SIZE_PACBIO = 10000
 MAX_NUM_READS_ILLUMINA = 10000
 MAX_NUM_READS_PACBIO = 1000
+HYBRID_HOTSPOT = False
 
 try:
     profile
@@ -62,7 +63,7 @@ def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
 
     try:
         searcher = AlleleSearcherLite(
-            container, begin, end, cache, strict=False, pacbio=pacbio
+            container, begin, end, cache, strict=False, pacbio=pacbio, hybrid_hotspot=HYBRID_HOTSPOT
         )
     except LocationOutOfBounds:
         logging.warning("Out of bounds locations found for chunk %s, %d, %d" % (chromosome, begin, end))
@@ -160,12 +161,22 @@ if __name__ == "__main__":
         default=False,
     )
 
+    parser.add_argument(
+        "--hybrid_hotspot",
+        help="Enable hybrid hotspot detection",
+        action="store_true",
+        default=False,
+    )
+
     cache = None
 
     @profile
     def main():
         global cache
+        global HYBRID_HOTSPOT
         args = parser.parse_args()
+        if args.hybrid_hotspot:
+            HYBRID_HOTSPOT = True
 
         # logging.basicConfig(level=(logging.DEBUG if args.debug else logging.INFO), format='%(asctime)-15s %(message)s')
         logging.basicConfig(level=(logging.INFO if not args.debug else logging.DEBUG), format='%(asctime)-15s %(message)s')

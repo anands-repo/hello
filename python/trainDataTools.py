@@ -3,7 +3,6 @@ Classes for generating and manipulating training data for the new AlleleSearcher
 """
 from copy import deepcopy
 import ast
-from AlleleSearcherLite import AlleleSearcherLite
 # from ReferenceCache import ReferenceCache
 from PySamFastaWrapper import PySamFastaWrapper as ReferenceCache
 from PileupContainerLite import PileupContainerLite

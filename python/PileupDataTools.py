@@ -29,7 +29,16 @@ except Exception:
 
 
 class SearcherFactory:
-    def __init__(self, ref, featureLength, pacbio, useInternalLeftAlignment, noAlleleLevelFilter=False, clr=False):
+    def __init__(
+        self,
+        ref,
+        featureLength,
+        pacbio,
+        useInternalLeftAlignment,
+        noAlleleLevelFilter=False,
+        clr=False,
+        hybrid_hotspot=False,
+    ):
         """
         Factory object for creating a specific type of allele searcher again and again
 
@@ -50,6 +59,9 @@ class SearcherFactory:
 
         :param clr: bool
             Whether the read type is CLR for pacbio reads
+
+        :param hybrid_hotspot: bool
+            Enable hybrid hotspot detection
         """
         self.featureLength = featureLength
         self.pacbio = pacbio
@@ -57,6 +69,7 @@ class SearcherFactory:
         self.noAlleleLevelFilter = noAlleleLevelFilter or (clr and pacbio)
         self.clr = clr
         self.ref = ReferenceCache(database=ref)
+        self.hybrid_hotspot = hybrid_hotspot
 
     def __call__(self, container, start, stop):
         """
@@ -78,6 +91,7 @@ class SearcherFactory:
             pacbio=self.pacbio,
             useInternalLeftAlignment=self.useInternalLeftAlignment,
             noAlleleLevelFilter=self.noAlleleLevelFilter,
+            hybrid_hotspot=self.hybrid_hotspot,
         )
 
 

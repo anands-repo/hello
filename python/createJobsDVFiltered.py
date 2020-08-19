@@ -5,13 +5,14 @@ import logging
 from PySamFastaWrapper import PySamFastaWrapper
 
 
-def cmd(chromosome, start, stop, bam, ref, output, pacbio=False, log=False, bam2=None):
+def cmd(chromosome, start, stop, bam, ref, output, pacbio=False, log=False, bam2=None, hybrid_hotspot=False):
     command = "python %s/HotspotDetectorDVFiltered.py" % os.path.split(os.path.abspath(__file__))[0]
     command += " --bam %s" % (bam if bam2 is None else (bam + "," + bam2))
     command += " --ref %s" % ref
     command += " --region %s,%d,%d" % (chromosome, start, stop)
     command += " --output %s" % output
     command += " --pacbio" if pacbio else ""
+    command += " --hybrid_hotspot" if hybrid_hotspot else ""
     command += " >& %s" % os.path.splitext(output)[0] + ".log" if log else ""
 
     return command
@@ -121,5 +122,6 @@ if __name__ == "__main__":
     parser.add_argument("--pacbio", help="Indicate that this is for PacBio reads", action="store_true", default=False)
     parser.add_argument("--log", help="Enable logging", default=False, action="store_true")
     parser.add_argument("--outputDir", help="Output directory", default=None)
+    parser.add_argument("--hybrid_hotspot", help="Use hybrid hotspot detection", default=False)
     args = parser.parse_args()
     main(args)

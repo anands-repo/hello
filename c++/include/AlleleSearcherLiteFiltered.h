@@ -138,6 +138,7 @@ struct AlleleSearcherLiteFiltered
     int min_depth_for_pacbio_realignment;
     map<pair<long, long>, unordered_set<string>> alleles_in_regions;
     size_t max_reassembly_region_size;
+    bool hybrid_hotspot;
     
     void updateAlleleCounts();
     void listToQuality(const p::list& qualities);
@@ -145,6 +146,7 @@ struct AlleleSearcherLiteFiltered
     void pushRegions(vector<size_t>&, vector<pair<size_t,size_t> >&, bool);
     bool isTrackEmpty(const size_t, const size_t, const size_t);
     void determine_differing_regions_helper(const vector<AlleleCounts>&, set<long>&, long, long);
+    void determine_differing_regions_hybrid_helper(set<long>&);
     void cluster_differing_regions_helper(const set<long>&, vector<pair<size_t, size_t>>&, bool);
     void determineDifferingRegions(bool);
     void assemble(size_t, size_t);
@@ -181,7 +183,7 @@ struct AlleleSearcherLiteFiltered
         size_t windowStart,
         size_t start,
         size_t stop,
-        size_t qThreshold = 10
+        bool hybrid
     );
         // Boost.Python places an upper limit of 15 arguments for the init function
         // https://www.boost.org/doc/libs/1_41_0/libs/python/doc/v2/configuration.html

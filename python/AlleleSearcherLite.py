@@ -31,6 +31,7 @@ class AlleleSearcherLite:
         strict=True,
         useInternalLeftAlignment=False,
         noAlleleLevelFilter=False,
+        hybrid_hotspot=False,
     ):
         """
         :param container: list/PileupContainerLite
@@ -59,6 +60,9 @@ class AlleleSearcherLite:
 
         :param noAlleleLevelFilter: bool
             Do not use allele-level filters
+
+        :param hybrid_hotspot: bool
+            Enable hybrid hotspot detection
         """
         self.start = start
         self.stop = stop
@@ -137,7 +141,7 @@ class AlleleSearcherLite:
             windowStart,
             start,
             stop,
-            useInternalLeftAlignment
+            hybrid_hotspot
         )
 
         x = self.differingRegions

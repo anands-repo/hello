@@ -342,7 +342,7 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     size_t windowStart,
     size_t start,
     size_t stop,
-    size_t qThreshold
+    bool hybrid_hotspot
 ) :
     reads(strListToVector(reads)),
     pacbio(LIST_TO_BOOL_VECTOR(pacbio)),
@@ -355,7 +355,7 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     insertScore(4),
     deleteScore(4),
     windowStart(windowStart),
-    qThreshold(qThreshold),
+    qThreshold(10),
     useMapq(true),
     useOrientation(true),
     useQEncoding(true),
@@ -385,7 +385,8 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     band_margin(6),
     region_start(start),
     region_stop(stop),
-    max_reassembly_region_size(10)
+    max_reassembly_region_size(10),
+    hybrid_hotspot(hybrid_hotspot)
 {
     bool leftAlign = false;
 
@@ -533,6 +534,68 @@ void AlleleSearcherLiteFiltered::cluster_differing_regions_helper(
     }
 }
 
+// Perform hybrid (combined) differing regions calculations
+void AlleleSearcherLiteFiltered::determine_differing_regions_hybrid_helper(
+    set<long>& differing_locations
+) {
+    for (long i = 0; i < this->counts_i.size(); ++i) {
+        const auto& count_i = this->counts_i[i];
+        const auto& count_p = this->counts_p[i];
+        set<pair<string, string> > alt_keys;
+
+        // Collect all allelic keys from both pacbio and Illumina reads
+        for (auto& alt: count_i.altCounts) {
+            alt_keys.insert(alt.first);
+        }
+
+        for (auto& alt: count_i.altCounts) {
+            alt_keys.insert(alt.first);
+        }
+
+        for (auto& alt: alt_keys) {
+            float value_i = 0;
+            float value_p = 0;
+            float total = count_i.total + count_p.total;
+            float ref_count_i = count_i.refCount;
+            float ref_count_p = count_p.refCount;
+            float alt_count;
+            const string& ref_base = alt.first;
+            const string& alt_base = alt.second;
+
+            if (total == 0) continue;
+
+            if (count_i.altCounts.find(alt) != count_i.altCounts.end()) {
+                value_i = count_i.altCounts.find(alt)->second;
+            }
+
+            if (count_p.altCounts.find(alt) != count_p.altCounts.end()) {
+                value_p = count_p.altCounts.find(alt)->second;
+            }
+
+            if ((ref_base.size() == 1) && (alt_base.size() == 1)) {
+                alt_count = value_i + value_p;
+
+                if (
+                    ((value_i + value_p) / total >= this->snvThreshold) &&
+                    (alt_count >= this->minCount)
+                ) {
+                    differing_locations.insert(count_i.pos);
+                }
+            } else {
+                alt_count = value_i / 2 + value_p;
+                if (
+                    ((value_i + value_p) / total >= this->indelThreshold) &&
+                    (alt_count >= this->minCount)
+                ) {
+                    for (long i = count_i.pos; i < count_i.pos + ref_base.size(); i++) {
+                        differing_locations.insert(i);
+                    }
+                }
+            } // else
+        } // for
+    } // for
+}
+
 void AlleleSearcherLiteFiltered::determineDifferingRegions(bool strict) {
     CLEAR(this->differingRegions)
     CLEAR(this->differing_regions_i)
@@ -541,25 +604,29 @@ void AlleleSearcherLiteFiltered::determineDifferingRegions(bool strict) {
     set<long> differing_locations_p;
     set<long> differing_locations;
 
-    if ((num_illumina_reads > 0) && (num_pacbio_reads == 0)) {
-        this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
-        cluster_differing_regions_helper(differing_locations_i, differing_regions_i, strict);
-    } else if ((num_pacbio_reads > 0) && (num_illumina_reads == 0)) {
-        this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
-        cluster_differing_regions_helper(differing_locations_p, differing_regions_p, strict);
+    if (!this->hybrid_hotspot) {
+        if ((num_illumina_reads > 0) && (num_pacbio_reads == 0)) {
+            this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
+            cluster_differing_regions_helper(differing_locations_i, differing_regions_i, strict);
+        } else if ((num_pacbio_reads > 0) && (num_illumina_reads == 0)) {
+            this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
+            cluster_differing_regions_helper(differing_locations_p, differing_regions_p, strict);
+        } else {
+            this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
+            this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
+            cluster_differing_regions_helper(differing_locations_i, differing_regions_i, strict);
+            cluster_differing_regions_helper(differing_locations_p, differing_regions_p, strict);
+            std::set_union(
+                differing_locations_i.begin(), differing_locations_i.end(),
+                differing_locations_p.begin(), differing_locations_p.end(),
+                std::inserter(differing_locations, differing_locations.begin())
+            );
+            cluster_differing_regions_helper(differing_locations, this->differingRegions, strict);
+        }
     } else {
-        this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
-        this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
-        cluster_differing_regions_helper(differing_locations_i, differing_regions_i, strict);
-        cluster_differing_regions_helper(differing_locations_p, differing_regions_p, strict);
+        this->determine_differing_regions_hybrid_helper(differing_locations);
+        cluster_differing_regions_helper(differing_locations, this->differingRegions, strict);
     }
-
-    std::set_union(
-        differing_locations_i.begin(), differing_locations_i.end(),
-        differing_locations_p.begin(), differing_locations_p.end(),
-        std::inserter(differing_locations, differing_locations.begin())
-    );
-    cluster_differing_regions_helper(differing_locations, this->differingRegions, strict);
 
     for (auto& item: differingRegions) {
         DEBUG << "Found differing region " << item.first << ", " << item.second;

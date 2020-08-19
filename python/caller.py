@@ -16,7 +16,6 @@ import ast
 import torch
 import math
 import AlleleSearcherDNN
-from AlleleSearcherLite import AlleleSearcherLite
 import os
 import MixtureOfExperts
 import MixtureOfExpertsAdvanced
@@ -554,6 +553,13 @@ if __name__ == "__main__":
         default=False,
     );
 
+    parser.add_argument(
+        "--hybrid_hotspot",
+        help="Use hybrid hotspot detection method",
+        default=False,
+        action="store_true",
+    )
+
     args = parser.parse_args();
 
     libCallability.initLogging(args.debug);
@@ -596,6 +602,7 @@ if __name__ == "__main__":
         useInternalLeftAlignment=False,
         noAlleleLevelFilter=args.noAlleleLevelFilter,
         clr=False,      # TBD: Currently doesn't support CLR reads
+        hybrid_hotspot=args.hybrid_hotspot,
     );
 
     logging.info("Getting callable sites");
