@@ -34,8 +34,8 @@ def SingleConvLayer(
             "type": "ReLU",
             "kwargs": dict(),
         }
-    ];
-    return convBlock;
+    ]
+    return convBlock
 
 
 def ResidualBlockConvShortcut(
@@ -115,9 +115,9 @@ def ResidualBlockConvShortcut(
                 },
             ]
         }
-    };
+    }
 
-    return residualBlock;
+    return residualBlock
 
 
 def ResidualBlockFTShortcut(
@@ -192,9 +192,9 @@ def ResidualBlockFTShortcut(
                 },
             ]
         }
-    };
+    }
 
-    return residualBlock;
+    return residualBlock
 
 
 def inceptionBlockA(
@@ -218,7 +218,7 @@ def inceptionBlockA(
             padding=0,
             dilation=1,
             stride=1,
-        );
+        )
         if outputStrides > 1:
             conv.append(
                 {
@@ -229,8 +229,8 @@ def inceptionBlockA(
                         "padding": 1,
                     }
                 }
-            );
-        return conv;
+            )
+        return conv
 
     inceptionBlock = {
         "type": "Inception",
@@ -284,9 +284,9 @@ def inceptionBlockA(
                 )
             ]
         }
-    };
+    }
 
-    return inceptionBlock;
+    return inceptionBlock
 
 
 def inceptionBlockB(
@@ -312,7 +312,7 @@ def inceptionBlockB(
             padding=0,
             dilation=1,
             stride=1,
-        );
+        )
         if outputStrides > 1:
             conv.append(
                 {
@@ -323,8 +323,8 @@ def inceptionBlockB(
                         "padding": 1,
                     }
                 }
-            );
-        return conv;
+            )
+        return conv
 
     inceptionBlock = {
         "type": "Inception",
@@ -412,9 +412,9 @@ def inceptionBlockB(
                 ),
             ]
         }
-    };
+    }
 
-    return inceptionBlock;
+    return inceptionBlock
 
 
 def terminus(inChannels, outChannels, dropout=0):
@@ -455,6 +455,6 @@ def terminus(inChannels, outChannels, dropout=0):
                 "out_features": outChannels,
             }
         }
-    ];
+    ]
 
-    return config;
+    return config
