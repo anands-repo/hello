@@ -1,3 +1,4 @@
+import torch
 
 
 def SingleConvLayer(
@@ -458,3 +459,94 @@ def terminus(inChannels, outChannels, dropout=0):
     ]
 
     return config
+
+
+class ResidualBlock(torch.nn.Module):
+    """
+    Creates a residual block of convolutional layers
+    """
+    def __init__(self, **kwargs):
+        super().__init__()
+        # 'feedforward' is a list of feed-forward layers
+        # 'shortcut' indicates the shortcut connection
+        ffConfigs = kwargs['feedforward']
+        shConfigs = kwargs['shortcut']
+        self.ffNetwork = Network(ffConfigs)
+        self.shNetwork = Network(shConfigs)
+
+    def forward(self, tensor):
+        return self.ffNetwork(tensor) + self.shNetwork(tensor)
+
+
+class Noop(torch.nn.Module):
+    """
+    Noop layer does no operation; for shortcut connections
+    """
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensor):
+        return tensor
+
+
+class Flatten(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensor):
+        return tensor.view(tensor.shape[0], -1)
+
+
+class GlobalPool(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensor):
+        return torch.sum(tensor, dim=2)
+
+
+class Inception(torch.nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__()
+        branches = kwargs['branches']
+        self.numBranches = len(branches)
+
+        for i, branch in enumerate(branches):
+            branchNetwork = NNTools.Network(branch)
+            setattr(self, 'branch%d' % i, branchNetwork)
+
+    def forward(self, tensor):
+        branchResults = []
+
+        for i in range(self.numBranches):
+            branch = getattr(self, 'branch%d' % i)
+            branchResults.append(branch(tensor))
+
+        return torch.cat(branchResults, dim=1)
+
+
+torch.nn.Flatten = Flatten
+torch.nn.GlobalPool = GlobalPool
+torch.nn.ResidualBlock = ResidualBlock
+torch.nn.Noop = Noop
+torch.nn.Inception = Inception
+
+
+class Network(torch.nn.Module):
+    """
+    Base Network class
+    """
+    def __init__(self, config):
+        super().__init__()
+        layers = []
+
+        for i, configuration in enumerate(config):
+            layerType = getattr(torch.nn, configuration['type'])
+            layer = layerType(**configuration['kwargs'])
+            initCNN(layer)
+            layers.append(layer)
+
+        self.network = torch.nn.Sequential(*layers)
+
+    def forward(self, tensors, *args, **kwargs):
+        return self.network(tensors)

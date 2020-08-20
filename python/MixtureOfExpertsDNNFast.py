@@ -1,6 +1,5 @@
 import torch
 import torch.utils.data
-from torch.utils.data.sampler import SubsetRandomSampler
 import os
 import importlib
 import logging
@@ -9,7 +8,6 @@ import random
 import argparse
 import math
 import numpy as np
-from determineMaxQLoss import determineMaxQ, determineMaxQParallelWrapper
 import sys
 import _pickle as pickle
 import shutil
@@ -17,8 +15,7 @@ from functools import reduce
 from multiprocessing import Pool
 import ast
 from LRSchedulers import CosineAnnealingWarmRestarts, SineAnnealingWarmRestarts
-import AlleleSearcherDNN
-import MixtureOfExperts
+import MixtureOfExpertsTools
 import MixtureOfExpertsAdvanced
 import MemmapDatasetLoader
 
@@ -64,6 +61,92 @@ try:
 except Exception:
     def profile(x):
         return x
+
+
+class Payload:
+    def __init__(self, devices, batches, listTypes=list()):
+        """
+        Packages a set of batches for consumption by ReadConvolverHybridDNNForDataParallel
+
+        :param devices: list
+            List of devices on to which data should be transferred
+
+        :param batches: list
+            List of batches encoded as a dictionary
+
+        :param listTypes: list
+            List of items to be converted to lists instead of cuda tensors
+        """
+        assert(len(batches) == len(devices));
+        for batch, device in zip(batches, devices):
+            for key, value in batch.items():
+                if key in listTypes:
+                    if (type(value) is tuple) or (type(value) is list):
+                        value = tuple(v.cpu().data.tolist() for v in value);
+                    else:
+                        value = value.cpu().data.tolist();
+                else:
+                    if (type(value) is tuple) or (type(value) is list):
+                        value = tuple(v.cuda(device=device, non_blocking=True) for v in value);
+                    else:
+                        # This is a special case for 'multiplierMode'
+                        if type(value) is not str:
+                            value = value.cuda(device=device, non_blocking=True);
+                setattr(self, key + "%d" % device.index, value);
+
+
+class WrapperForDataParallel(torch.nn.Module):
+    """
+    A module to allow dataparallel wrapping of our favorite DNNs
+
+    forward accepts a Payload object that encodes data for the specific instance
+    as payload.<tensorname><device id>
+    """
+    def __init__(self, dnn):
+        super().__init__();
+        self.dnn = dnn;
+
+    def forward(self, payload, *args):
+        device = next(self.parameters()).get_device();
+        tensors = getattr(payload, 'tensors%d' % device);
+        numAllelesPerSite = getattr(payload, 'numAllelesPerSite%d' % device);
+        numReadsPerAllele = getattr(payload, 'numReadsPerAllele%d' % device);
+        numReadsPerSite = getattr(payload, 'numReadsPerSite%d' % device);
+
+        return self.dnn(
+            tensors,
+            numAllelesPerSite,
+            numReadsPerAllele,
+            numReadsPerSite,
+        );
+
+
+def initMetaToUniform(moe):
+    """
+    Utility function to initialize meta expert to choose all experts
+    with approximately equal probability
+
+    :param moe: MoEMergedWrapper
+        Mixture of experts model in which to make initialization
+    """
+    meta = moe.meta
+
+    # See torch.nn.Sequential/torch.nn.Module
+    # Pick the last item in ordered dictionary for torch.nn.Sequential
+    # This is an iterator, hence cannot index directoy
+    for _ in meta.network._modules.values():
+        lastLayer = _
+
+    if hasattr(lastLayer, 'weight') and hasattr(lastLayer, 'bias'):
+        logging.info("Initializing meta-expert's final layer")
+        lastLayer.weight.data.normal_(0.0, 1e-2)  # Small weights
+        lastLayer.bias.data.fill_(0.33)  # Relatively larger biases
+    else:
+        logging.info("Cannot initialize meta-expert since last layer doesn't have bias (or weight)")
+
+
+def countParams(model):
+    return sum(p.numel() for p in model.parameters())
 
 
 def collate_function(batch):
@@ -263,15 +346,11 @@ class DataLoaderLocal:
 def dataLoader(
     numWorkers,
     batchSize,
-    hdf5,
+    files,
     trainPct=0.9,
     overfit=False,
-    useBlockSampler=False,
-    blockSize=500,
     pruneHomozygous=False,
-    keepPct=0.1,
     valData=None,
-    loadIntoMem=False,
     homSNVKeepRate=1,
     maxReadsPerSite=0,
 ):
@@ -284,7 +363,7 @@ def dataLoader(
     :param batchSize: int
         Size of a batch
 
-    :param hdf5: str
+    :param files: str
         The input data file
 
     :param trainPct: float
@@ -293,31 +372,16 @@ def dataLoader(
     :param overfit: bool
         For testing purpose, allow to overfit to training set (set train and val sets to be the same)
 
-    :param padLength: int
-        Length to which input tensors are to be padded
-
-    :param useBlockSampler: bool
-        Enable sampling per block rather than global sampling
-
-    :param blockSize: int
-        Size of a block of data
-
     :param pruneHomozygous: bool
         Prune homozygous locations
-
-    :param keepPct: float
-        Fraction of homozygous regions to keep if pruning
 
     :param valData: str
         A separate validation set if necessary
 
-    :param loadIntoMem: bool
-        Load all data into memory before training/val iteration
-
     :return: tuple
         Two torch.utils.data.DataLoader objects for training and validation
     """
-    memmaplist = [r.rstrip() for r in open(hdf5, 'r').readlines()]
+    memmaplist = [r.rstrip() for r in open(files, 'r').readlines()]
     random.shuffle(memmaplist)
 
     if overfit:
@@ -358,7 +422,6 @@ def dataLoader(
 @profile
 def train(
     numEpochs=10,
-    batchSize=64,
     lr=1e-3,
     configFile=None,
     cuda=True,
@@ -371,24 +434,19 @@ def train(
     lrScheduleFactor=-1,
     dataloader=None,
     checkpoint=None,
-    pretrained=None,
-    pretrainedVal=None,
     checkpointArchive=None,
     enableMultiGPU=False,
     minLr=0,
-    keepAll=False,
     maxLr=1e-2,
     T0=10,
     Tmult=2,
     onlyEval=False,
     model=None,
-    moeType="unmerged",
     warmup=False,
     initMeta=False,
     usePredictionLossInVal=False,
     useAccuracyInVal=False,
     logWriter=None,
-    prefetchData=False,
     entropyRegularizer=0.1,
     entropyDecay=0.5,
     rangeTest=False,
@@ -402,19 +460,14 @@ def train(
     smoothing=0,
     aux_loss=0,
 ):
+    moeType = "advanced"
     tLoader, vLoader, lTrain, lVal = dataloader
     configDict = importlib.import_module(configFile).configDict
 
     if moeType == "advanced":
-        searcher = MixtureOfExperts.WrapperForDataParallel(MixtureOfExpertsAdvanced.createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=useSeparateMeta))
-    elif moeType == "unmerged":
-        searcher = MixtureOfExperts.WrapperForDataParallel(MixtureOfExperts.createMoEModel(configDict))
-    elif moeType == "merged":
-        searcher = MixtureOfExperts.WrapperForDataParallel(MixtureOfExperts.createMoEMergedModel(configDict))
-    elif moeType == "full":
-        searcher = MixtureOfExperts.WrapperForDataParallel(MixtureOfExperts.createMoEFullMergedModel(configDict))
+        searcher = WrapperForDataParallel(MixtureOfExpertsAdvanced.createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=useSeparateMeta))
     else:
-        searcher = MixtureOfExperts.WrapperForDataParallel(MixtureOfExperts.createMoEFullMergedConditionalModel(configDict))
+        raise NotImplementedError("Only advanced MixtureOfExperts is accepted")
 
     if detachMeta:
         # Do not propagate gradients downstream from meta-expert
@@ -425,7 +478,7 @@ def train(
         searcher.dnn.detachExperts = True
 
     if initMeta:
-        MixtureOfExperts.initMetaToUniform(searcher.dnn)
+        initMetaToUniform(searcher.dnn)
 
     if enableMultiGPU:
         searcher = torch.nn.DataParallel(searcher)
@@ -463,19 +516,19 @@ def train(
 
     weights = [1, 1] if not weightLabels else tLoader.relativeFrequency
     prevLoss = float("inf")
-    qLossFn = MixtureOfExperts.MoELoss(
+    qLossFn = MixtureOfExpertsTools.MoELoss(
         regularizer=entropyRegularizer, decay=entropyDecay, provideIndividualLoss=True, weights=weights, smoothing=smoothing, aux_loss=aux_loss,
     )
 
     if usePredictionLossInVal:
         logging.info("Using prediction loss in validation")
-        vLossFn = MixtureOfExperts.PredictionLoss()
+        vLossFn = MixtureOfExpertsTools.PredictionLoss()
     elif useAccuracyInVal:
         logging.info("Using accuracy in validation")
-        vLossFn = MixtureOfExperts.Accuracy()
+        vLossFn = MixtureOfExpertsTools.Accuracy()
     elif useSeparateValLoss:
         logging.info("Using separate validation loss function")
-        vLossFn = MixtureOfExperts.MoELoss(
+        vLossFn = MixtureOfExpertsTools.MoELoss(
             provideIndividualLoss=True
         )
     else:
@@ -533,12 +586,6 @@ def train(
         if 'numIterLossDecrease' in checkpoint:
             numIterLossDecrease = checkpoint['numIterLossDecrease']
 
-        # # If we are in the training iteration, restore sampler index number
-        # if itertype == "train":
-        #     tLoader.sampler.nextIdx = batchSize * batchStart
-        # elif itertype == "val":
-        #     vLoader.sampler.nextIdx = batchSize * batchStart
-
         if 'lr_scheduler_checkpoint' in checkpoint:
             # If we were doing warmup and have passed epoch 0 training iteration, then reinstanciate the scheduler
             # to the correct type. If no scheduler required, do not do anything.
@@ -560,9 +607,6 @@ def train(
         else:
             assert(scheduler is None), "Need an lr-scheduler, but none found in checkpoint!"
     else:
-        if pretrained is not None:
-            raise NotImplementedError("Currently pre-trained model loading is not supported")
-
         itertype = None
         epochStart = 0
         batchStart = 0
@@ -603,7 +647,7 @@ def train(
 
         logging.info("Performed checkpointing; epoch: %d, batch: %d, itertype: %s" % (epoch, batch, itertype))
 
-    numParams = AlleleSearcherDNN.countParams(searcher)
+    numParams = countParams(searcher)
     trainIterNumber = 0
 
     logging.info("Starting training of model with %d parameters" % numParams)
@@ -621,10 +665,6 @@ def train(
 
         if onlyEval:
             itertypeList = ["val"]
-
-        # Pre-fetch all data at the start of each epoch
-        if prefetchData:
-            prefetch(tLoader.dataset)
 
         for iterType in itertypeList:
             totalLoss = 0
@@ -695,7 +735,7 @@ def train(
                     batches.append(batchDict)
 
                 numAllelesPerSiteAll = torch.cat(numAllelesPerSiteAll, dim=0).tolist()
-                payload = AlleleSearcherDNN.Payload(
+                payload = Payload(
                     devices, batches, listTypes=['numReadsPerAllele', 'numAllelesPerSite', 'numReadsPerSite']
                 )
                 labels = torch.cat(labels, dim=0)
@@ -733,10 +773,6 @@ def train(
                         torch.save(searcher, os.path.abspath(outputPrefix + ".err.dnn"))
                         torch.save(payload, os.path.abspath(outputPrefix + ".payload.pth"))
                         sys.exit(0)
-
-                    # if (logWriter is not None) and (i % 1000 == 0):
-                    #     logging.info("Logging gradients with tensorboard")
-                    #     MixtureOfExperts.addGradientsToTensorBoard(searcher.module.dnn, logWriter, trainIterNumber)
 
                     optim.step()
                 else:
@@ -858,7 +894,7 @@ def train(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train AlleleSearcherDNN")
+    parser = argparse.ArgumentParser(description="Train variant caller")
 
     parser.add_argument(
         "--data",
@@ -877,13 +913,6 @@ if __name__ == "__main__":
         help="Config for Mixture-of-Experts",
         default="initConfig",
         required=False,
-    )
-
-    parser.add_argument(
-        "--moeType",
-        help="Type of mixture of experts to use",
-        default="unmerged",
-        choices=["merged", "unmerged", "full", "fullConditional", "advanced"],
     )
 
     parser.add_argument(
@@ -1038,20 +1067,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--useBlockSampler",
-        help="Use block randomization instead of global randomization",
-        action="store_true",
-        default=False,
-    )
-
-    parser.add_argument(
-        "--blockSize",
-        help="Block size for block sampler",
-        type=int,
-        default=500,
-    )
-
-    parser.add_argument(
         "--pruneHomozygous",
         help="Exclude clearly homozygous locations from training",
         default=False,
@@ -1063,27 +1078,6 @@ if __name__ == "__main__":
         help="Percentage of clearly homozygous locations to keep",
         default=0.1,
         type=float,
-    )
-
-    parser.add_argument(
-        "--useReadDepth",
-        help="Whether read depth normalization should be used",
-        default=False,
-        action="store_true",
-    )
-
-    parser.add_argument(
-        "--depthMode",
-        help="How read depth is to be used",
-        choices=["normalize", "addendum", None],
-        default=None,
-    )
-
-    parser.add_argument(
-        "--keepAll",
-        default=False,
-        help="Keep all models trained with improved validation loss",
-        action="store_true",
     )
 
     parser.add_argument(
@@ -1276,24 +1270,14 @@ if __name__ == "__main__":
     CHECKPOINT_FREQ = args.checkPointFreq
 
     args.useAccuracyInVal = False
-    # if args.onlyEval:
-    #     # args.usePredictionLossInVal = True
-    #     args.useAccuracyInVal = True
-    #     logging.info("Running evaluation")
-    # else:
-    #     args.useAccuracyInVal = False
 
     dataloader = dataLoader(
         numWorkers=args.numWorkers,
         batchSize=args.batchSize,
-        hdf5=args.data,
+        files=args.data,
         overfit=args.overfit,
-        useBlockSampler=args.useBlockSampler,
-        blockSize=args.blockSize,
         pruneHomozygous=args.pruneHomozygous,
-        keepPct=args.keepPct,
         valData=args.valData,
-        loadIntoMem=args.prefetch,
         homSNVKeepRate=args.homSNVKeepRate,
         maxReadsPerSite=args.maxReadsPerSite,
     )
@@ -1328,7 +1312,6 @@ if __name__ == "__main__":
 
     train(
         numEpochs=args.numEpochs,
-        batchSize=args.batchSize,
         lr=args.lr,
         configFile=args.config,
         cuda=args.cuda,
@@ -1341,18 +1324,14 @@ if __name__ == "__main__":
         lrScheduleFactor=args.lrFactor,
         dataloader=dataloader,
         checkpoint=args.checkpoint,
-        pretrained=None,
-        pretrainedVal=None,
         checkpointArchive=args.checkpointArchive,
         enableMultiGPU=args.useMultiGPU,
         minLr=args.minLr,
-        keepAll=args.keepAll,
         maxLr=args.maxLr,
         T0=args.T0,
         Tmult=args.Tmult,
         onlyEval=args.onlyEval,
         model=args.model,
-        moeType=args.moeType,
         warmup=args.warmup,
         initMeta=args.initMeta,
         usePredictionLossInVal=args.usePredictionLossInVal,

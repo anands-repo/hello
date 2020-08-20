@@ -6,7 +6,7 @@ import warnings
 import logging
 import glob
 
-CHROMOSOMES = [str(i) for i in range(21)]
+CHROMOSOMES = [str(i) for i in range(1, 21)]
 
 
 def main(ibams, pbams, random_combine=False):
@@ -20,6 +20,7 @@ def main(ibams, pbams, random_combine=False):
     logging.info("Creating hotspot detection jobs")
 
     train_files = []
+    caller_commands = []
 
     for ib in ibams:
         for chrom in CHROMOSOMES:
@@ -101,24 +102,35 @@ def main(ibams, pbams, random_combine=False):
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
-            logging.info("Created data dump commands, launching data dump")
+            logging.info("Created data dump commands")
 
-            subprocess.call(
-                "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
-            )
+            if not args.norun_caller:
+                logging.info("Launching data dump")
+                subprocess.call(
+                    "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
+                )
 
-            logging.info("Completed data dump")
+                logging.info("Completed data dump")
 
-            # Collect list of results
-            train_files.extend(glob.glob(os.path.join(output_dir, "*.index")))
+                # Collect list of results
+                train_files.extend(glob.glob(os.path.join(output_dir, "*.index")))
+            else:
+                logging.info("Saving data dump command")
+                caller_commands.append(caller_command_filename)
 
-    training_files = os.path.join(args.workdir, "data.lst")
+    if not args.norun_caller:
+        training_files = os.path.join(args.workdir, "data.lst")
 
-    with open(training_files, "w") as dhandle:
-        for line in train_files:
-            dhandle.write(line + "\n")
+        with open(training_files, "w") as dhandle:
+            for line in train_files:
+                dhandle.write(line + "\n")
 
-    logging.info("Training data files in %s" % training_files)
+        logging.info("Training data files in %s" % training_files)
+    else:
+        logging.info("Use the following scripts to dump training data")
+
+        for cmd_file in caller_commands:
+            logging.info("Run file: %s" % cmd_file)
 
 
 if __name__ == "__main__":
@@ -167,7 +179,23 @@ if __name__ == "__main__":
         action="store_true",
     )
 
+    parser.add_argument(
+        "--norun_caller",
+        help="Do not run caller, just provide run commands (for launching on different machines)",
+        default=False,
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--chromosomes",
+        help="Chromosomes to use (comma-separated)",
+        required=False,
+    )
+
     args = parser.parse_args()
+
+    if args.chromosomes:
+        CHROMOSOMES = args.chromosomes.split(",")
 
     logging.basicConfig(level=logging.INFO)
 

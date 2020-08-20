@@ -1,8 +1,32 @@
 import ast
 import argparse
 import os
-from trainer import measureDistance
 import logging
+
+
+def measureDistance(pointA, pointB):
+    """
+    Determines the distance pointB - pointA
+
+    :param pointA: dict
+        Point A
+
+    :param pointB: dict
+        Point B
+
+    :return: int
+        Distance
+    """
+    if (pointA['chromosome'] != pointB['chromosome']):
+        distance = float('inf');
+
+    if ('position' in pointA) and ('position' in pointB):
+        return pointB['position'] - pointA['position'];
+    elif ('start' in pointB) and ('stop' in pointA):
+        return pointB['start'] - pointA['stop'] + 1;
+    else:
+        raise ValueError("Bad arguments " + str(pointA) + ", " + str(pointB));
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Shard a set of hotspots for parallel runs");

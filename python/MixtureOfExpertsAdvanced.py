@@ -1,7 +1,6 @@
 import torch
 import itertools
-import ReadConvolver
-import AlleleSearcherDNN
+import NNTools
 import importlib
 import logging
 import collections
@@ -34,37 +33,14 @@ def reduceSlots(d, slots):
     return resultsSelected - paddedSelections
 
 
-class Inception(torch.nn.Module):
-    def __init__(self, **kwargs):
-        super().__init__()
-        branches = kwargs['branches']
-        self.numBranches = len(branches)
-
-        for i, branch in enumerate(branches):
-            branchNetwork = AlleleSearcherDNN.Network(branch)
-            setattr(self, 'branch%d' % i, branchNetwork)
-
-    def forward(self, tensor):
-        branchResults = []
-
-        for i in range(self.numBranches):
-            branch = getattr(self, 'branch%d' % i)
-            branchResults.append(branch(tensor))
-
-        return torch.cat(branchResults, dim=1)
-
-
 class ConvCombiner(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.network = AlleleSearcherDNN.Network(config)
+        self.network = NNTools.Network(config)
 
     def forward(self, conv1, conv2):
         convInput = torch.cat((conv1, conv2), dim=1)
         return self.network(convInput)
-
-
-torch.nn.Inception = Inception
 
 
 class DummyGraphNetwork(torch.nn.Module):
@@ -104,16 +80,16 @@ class MoEMergedAdvanced(torch.nn.Module):
         siteConvCombiner=None,
     ):
         """
-        :param readConv0: AlleleSearcherDNN.Network
+        :param readConv0: NNTools.Network
             A read convolver module (tech0)
 
-        :param readConv1: AlleleSearcherDNN.Network
+        :param readConv1: NNTools.Network
             A read convolver module (tech1)
 
-        :param alleleConv0: AlleleSearcherDNN.Network
+        :param alleleConv0: NNTools.Network
             Allele-level convolver (tech0)
 
-        :param alleleConv1: AlleleSearcherDNN.Network
+        :param alleleConv1: NNTools.Network
             Allele-level convolver (tech1)
 
         :param experts: tuple
@@ -391,21 +367,21 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
 
 
 def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
-    ngsConvolver = AlleleSearcherDNN.Network(importlib.import_module(configDict['readConv']).config)
-    tgsConvolver = AlleleSearcherDNN.Network(importlib.import_module(configDict['readConv']).config)
-    meta = AlleleSearcherDNN.Network(importlib.import_module(configDict['meta']).config)
+    ngsConvolver = NNTools.Network(importlib.import_module(configDict['readConv']).config)
+    tgsConvolver = NNTools.Network(importlib.import_module(configDict['readConv']).config)
+    meta = NNTools.Network(importlib.import_module(configDict['meta']).config)
 
-    alleleConvNgs = AlleleSearcherDNN.Network(importlib.import_module(configDict['alleleConvSingle']).config)
-    alleleConvTgs = AlleleSearcherDNN.Network(importlib.import_module(configDict['alleleConvSingle']).config)
-    graphConvNgs = AlleleSearcherDNN.Network(importlib.import_module(configDict['graphConvSingle']).config)
-    graphConvTgs = AlleleSearcherDNN.Network(importlib.import_module(configDict['graphConvSingle']).config)
+    alleleConvNgs = NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
+    alleleConvTgs = NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
+    graphConvNgs = NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
+    graphConvTgs = NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
 
     # It is possible to avoid using graph convolver hybrid; in
     # this case, use a dummy module that always outputs a small value
     graphConvHybConf = importlib.import_module(configDict['graphConvHybrid']).config
 
     if len(graphConvHybConf) > 0:
-        graphConvHyb = AlleleSearcherDNN.Network(graphConvHybConf)
+        graphConvHyb = NNTools.Network(graphConvHybConf)
     else:
         graphConvHyb = DummyGraphNetwork()
 

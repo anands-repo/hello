@@ -17,7 +17,7 @@ import torch
 import math
 import AlleleSearcherDNN
 import os
-import MixtureOfExperts
+import MixtureOfExpertsTools
 import MixtureOfExpertsAdvanced
 import PileupDataTools
 import trainDataTools
