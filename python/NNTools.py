@@ -1,4 +1,16 @@
 import torch
+import logging
+
+
+def initCNN(layer):
+    if (type(layer) is torch.nn.Conv1d) or (type(layer) is torch.nn.Linear):
+        logging.info("Initializing layer");
+        if hasattr(layer, 'weight'):
+            if layer.weight is not None:
+                torch.nn.init.kaiming_uniform_(layer.weight);
+        if hasattr(layer, 'bias'):
+            if layer.bias is not None:
+                layer.bias.data.fill_(0.1);
 
 
 def SingleConvLayer(
