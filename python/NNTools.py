@@ -9,33 +9,36 @@ def SingleConvLayer(
     dilation,
     stride,
     groups=1,
+    activation="ReLU",
+    activation_args=dict(),
+    no_batch_norm=False,
 ):
-    convBlock = [
-        {
-            "type": "Conv1d",
-            "kwargs": {
-                "in_channels": inChannels,
-                "out_channels": outChannels,
-                "kernel_size": kernelSize,
-                "padding": padding,
-                "dilation": dilation,
-                "stride": stride,
-                "groups": groups,
-            }
-        },
+    convBlock = [{
+        "type": "Conv1d",
+        "kwargs": {
+            "in_channels": inChannels,
+            "out_channels": outChannels,
+            "kernel_size": kernelSize,
+            "padding": padding,
+            "dilation": dilation,
+            "stride": stride,
+            "groups": groups,
+        }
+    }]
 
-        {
+    if not no_batch_norm:
+        convBlock += [{
             "type": "BatchNorm1d",
             "kwargs": {
                 "num_features": outChannels,
             }
-        },
+        }]
 
-        {
-            "type": "ReLU",
-            "kwargs": dict(),
-        }
-    ]
+    convBlock += [{
+        "type": activation,
+        "kwargs": activation_args,
+    }]
+
     return convBlock
 
 

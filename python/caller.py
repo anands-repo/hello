@@ -560,6 +560,13 @@ if __name__ == "__main__":
         action="store_true",
     )
 
+    parser.add_argument(
+        "--pacbio",
+        help="For single BAM mode indicates whether a read is pacbio or not",
+        default=False,
+        action="store_true",
+    )
+
     args = parser.parse_args();
 
     libCallability.initLogging(args.debug);
@@ -591,14 +598,14 @@ if __name__ == "__main__":
             bamfile=bam,
             readRate=(PileupDataTools.READ_RATE_ILLUMINA if i == 0 else PileupDataTools.READ_RATE_PACBIO),
             chrPrefix=chrPrefix,
-            pacbio=(i > 0),
+            pacbio=(i > 0) or (len(bamfiles) == 1 and args.pacbio),
         );
         readSamplers.append(reader);
 
     searcherFactory = PileupDataTools.SearcherFactory(
         ref=args.ref,
         featureLength=args.featureLength,
-        pacbio=False,   # TBD: Currently only supports hybrid mode
+        pacbio=args.pacbio,
         useInternalLeftAlignment=False,
         noAlleleLevelFilter=args.noAlleleLevelFilter,
         clr=False,      # TBD: Currently doesn't support CLR reads

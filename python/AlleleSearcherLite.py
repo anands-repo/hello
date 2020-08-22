@@ -80,7 +80,6 @@ class AlleleSearcherLite:
         references = []
         mapq = []
         orientation = []
-        pacbio = []
         cigartuples = []
         self.noReads = [False for i in containers]
         self.pacbio = (len(containers) == 1) and pacbio
@@ -124,10 +123,10 @@ class AlleleSearcherLite:
         reference = ''.join(self.ref[windowStart: windowEnd])
 
         if len(containers) == 1:
-            pacbio = [pacbio for i in reads] 
+            pacbio_flags = [pacbio for i in reads] 
         else:
-            pacbio = [False for i in containers[0].pileupreads] + [True for i in containers[1].pileupreads]
-
+            pacbio_flags = [False for i in containers[0].pileupreads] + [True for i in containers[1].pileupreads]
+        
         self.searcher = libCallability.AlleleSearcherLite(
             reads,
             names,
@@ -136,7 +135,7 @@ class AlleleSearcherLite:
             refStarts,
             mapq,
             orientation,
-            pacbio,
+            pacbio_flags,
             reference,
             windowStart,
             start,

@@ -102,6 +102,19 @@ AlignedBases Read::get_aligned_bases(long start, long stop) const {
         result.second = Success;
     }
 
+    // Check wether there is a deletion at the start or the end position
+    if (aligned_pairs.find(start) != aligned_pairs.end()) {
+        if (aligned_pairs.find(start)->second.size() == 0) {
+            result.second = Fail;
+        }
+    }
+
+    if (aligned_pairs.find(stop  - 1) != aligned_pairs.end()) {
+        if (aligned_pairs.find(stop - 1)->second.size() == 0) {
+            result.second = Fail;
+        }
+    }
+
     // Collect base strings
     long min_quality = 10000;
     ostringstream sstr;
