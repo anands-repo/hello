@@ -143,7 +143,7 @@ class MoEMergedAdvanced(torch.nn.Module):
         )
         reducedFramesPerAllele1 = self.alleleConv1(
             reduceSlots(readLevelConv1, numReadsPerAllele[1])
-        )
+        ) if (self.alleleConv1 is not None and readLevelConv1 is not None) else None
         return reducedFramesPerAllele0, reducedFramesPerAllele1
 
     def preparePerSiteFramesFromReads(self, conv0, conv1, numAllelesPerSite, numReadsPerAllele):
@@ -203,69 +203,71 @@ class MoEMergedAdvanced(torch.nn.Module):
     def forward(self, tensors, numAllelesPerSite, numReadsPerAllele, *args, **kwargs):
         # 1. Perform read-level convolutions
         readLevelConv0 = self.readConv0(tensors[0].float())
-        readLevelConv1 = self.readConv1(tensors[1].float())
+        readLevelConv1 = self.readConv1(tensors[1].float()) if (self.readConv1 is not None) else None
 
         # 2. Perform allele-level convolutions
         alleleLevelConv0, alleleLevelConv1 = self.performAlleleConv(
             readLevelConv0, readLevelConv1, numReadsPerAllele
         )
 
-        if hasattr(self, 'useAdditive') and self.useAdditive:
-            if self.alleleConvCombiner is None:
-                alleleLevelConv2 = alleleLevelConv0 + alleleLevelConv1
+        if alleleLevelConv1 is not None:
+            if hasattr(self, 'useAdditive') and self.useAdditive:
+                if self.alleleConvCombiner is None:
+                    alleleLevelConv2 = alleleLevelConv0 + alleleLevelConv1
+                else:
+                    alleleLevelConv2 = self.alleleConvCombiner(
+                        alleleLevelConv0, alleleLevelConv1
+                    )
             else:
-                alleleLevelConv2 = self.alleleConvCombiner(
-                    alleleLevelConv0, alleleLevelConv1
+                alleleLevelConv2 = torch.cat(
+                    (alleleLevelConv0, alleleLevelConv1), dim=1
                 )
-        else:
-            alleleLevelConv2 = torch.cat(
-                (alleleLevelConv0, alleleLevelConv1), dim=1
-            )
 
         # 3. Determine per-site frames
         perSiteFrame0 = self.preparePerSiteFrames(alleleLevelConv0, numAllelesPerSite)
-        perSiteFrame1 = self.preparePerSiteFrames(alleleLevelConv1, numAllelesPerSite)
+        perSiteFrame1 = self.preparePerSiteFrames(alleleLevelConv1, numAllelesPerSite) if (alleleLevelConv1 is not None) else None
 
-        if hasattr(self, 'useAdditive') and self.useAdditive:
-            if self.siteConvCombiner is None:
-                # perSiteFrame2 = perSiteFrame0 + perSiteFrame1
-                # Note: This is conceptually better than the previous solution
-                # This makes all three experts use the same type of computations,
-                # A_j - \sum_{l != j} A_l, to produce input feature maps
-                perSiteFrame2 = self.preparePerSiteFrames(alleleLevelConv2, numAllelesPerSite)
-            else:
-                perSiteFrame2 = self.siteConvCombiner(
-                    perSiteFrame0, perSiteFrame1,
-                )
-        else:
-            perSiteFrame2 = torch.cat(
-                (perSiteFrame0, perSiteFrame1),
-                dim=1
-            )
-
-        if hasattr(self, 'readConv0Meta'):
-            readLevelConv0Meta = self.readConv0Meta(tensors[0].float())
-            readLevelConv1Meta = self.readConv1Meta(tensors[1].float())
-            perSiteFrames0Meta, perSiteFrames1Meta = self.preparePerSiteFramesFromReads(
-                readLevelConv0Meta,
-                readLevelConv1Meta,
-                numAllelesPerSite,
-                numReadsPerAllele
-            )
+        if perSiteFrame1 is not None:
             if hasattr(self, 'useAdditive') and self.useAdditive:
                 if self.siteConvCombiner is None:
-                    perSiteFrameMeta = perSiteFrames0Meta + perSiteFrames1Meta
+                    # perSiteFrame2 = perSiteFrame0 + perSiteFrame1
+                    # Note: This is conceptually better than the previous solution
+                    # This makes all three experts use the same type of computations,
+                    # A_j - \sum_{l != j} A_l, to produce input feature maps
+                    perSiteFrame2 = self.preparePerSiteFrames(alleleLevelConv2, numAllelesPerSite)
                 else:
-                    perSiteFrameMeta = self.siteConvCombiner(
-                        perSiteFrames0Meta, perSiteFrames1Meta
+                    perSiteFrame2 = self.siteConvCombiner(
+                        perSiteFrame0, perSiteFrame1,
                     )
             else:
-                perSiteFrameMeta = torch.cat(
-                    (perSiteFrames0Meta, perSiteFrames1Meta),
+                perSiteFrame2 = torch.cat(
+                    (perSiteFrame0, perSiteFrame1),
                     dim=1
+                ) if perSiteFrame1 else None
+
+            if hasattr(self, 'readConv0Meta'):
+                readLevelConv0Meta = self.readConv0Meta(tensors[0].float())
+                readLevelConv1Meta = self.readConv1Meta(tensors[1].float())
+                perSiteFrames0Meta, perSiteFrames1Meta = self.preparePerSiteFramesFromReads(
+                    readLevelConv0Meta,
+                    readLevelConv1Meta,
+                    numAllelesPerSite,
+                    numReadsPerAllele
                 )
-        else:
-            perSiteFrameMeta = perSiteFrame2
+                if hasattr(self, 'useAdditive') and self.useAdditive:
+                    if self.siteConvCombiner is None:
+                        perSiteFrameMeta = perSiteFrames0Meta + perSiteFrames1Meta
+                    else:
+                        perSiteFrameMeta = self.siteConvCombiner(
+                            perSiteFrames0Meta, perSiteFrames1Meta
+                        )
+                else:
+                    perSiteFrameMeta = torch.cat(
+                        (perSiteFrames0Meta, perSiteFrames1Meta),
+                        dim=1
+                    )
+            else:
+                perSiteFrameMeta = perSiteFrame2
 
         # 4. Prepare alleles per site tensor
         numAllelesPerSiteTensor = torch.LongTensor(numAllelesPerSite)
@@ -274,13 +276,17 @@ class MoEMergedAdvanced(torch.nn.Module):
 
         # 5. Perform expert computations
         ngsPredictions = self.expertComputations(alleleLevelConv0, perSiteFrame0, numAllelesPerSiteTensor, 0)
-        tgsPredictions = self.expertComputations(alleleLevelConv1, perSiteFrame1, numAllelesPerSiteTensor, 1)
-        hybPredictions = self.expertComputations(alleleLevelConv2, perSiteFrame2, numAllelesPerSiteTensor, 2)
 
-        # 6. Perform meta-expert computations
-        meta = torch.nn.functional.softmax(self.meta(perSiteFrameMeta), dim=1)
+        if perSiteFrame1 is not None:
+            tgsPredictions = self.expertComputations(alleleLevelConv1, perSiteFrame1, numAllelesPerSiteTensor, 1)
+            hybPredictions = self.expertComputations(alleleLevelConv2, perSiteFrame2, numAllelesPerSiteTensor, 2)
 
-        return [ngsPredictions, tgsPredictions, hybPredictions], meta
+            # 6. Perform meta-expert computations
+            meta = torch.nn.functional.softmax(self.meta(perSiteFrameMeta), dim=1)
+
+            return [ngsPredictions, tgsPredictions, hybPredictions], meta
+        else:
+            ngsPredictions
 
 
 class MoEMergedWrapperAdvanced(torch.nn.Module):
@@ -295,24 +301,38 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
 
         numAllelesPerSite = [len(alleles)]
         numReadsPerAllele0 = [featureDict[key][0].shape[0] for key in alleles]
-        numReadsPerAllele1 = [featureDict[key][1].shape[0] for key in alleles]
+        numReadsPerAllele1 = [
+            featureDict[key][1].shape[0] if (featureDict[key][1] is not None) else None \
+            for key in alleles
+        ]
         tensors0 = torch.cat(
             [torch.transpose(featureDict[key][0], 1, 2) for key in alleles], dim=0
         )
-        tensors1 = torch.cat(
-            [torch.transpose(featureDict[key][1], 1, 2) for key in alleles], dim=0
-        )
 
-        return alleles, (tensors0, tensors1), numAllelesPerSite, (numReadsPerAllele0, numReadsPerAllele1)
+        if None in numReadsPerAllele1:
+            tensors1 = None
+            hybrid = False
+        else:
+            tensors1 = torch.cat(
+                [torch.transpose(featureDict[key][1], 1, 2) for key in alleles], dim=0
+            )
+            hybrid = True
+
+        return alleles, (tensors0, tensors1), numAllelesPerSite, (numReadsPerAllele0, numReadsPerAllele1), hybrid
 
     def forward(self, featureDict):
         nnInputs = self._singleFeatureDictData(featureDict)
         alleles = nnInputs[0]
-        results = self.moeMerged(*nnInputs[1:])
-        experts, meta = results
-        meta = meta[0];  # Remove unnecessary batch dimension
-        experts = [torch.squeeze(torch.sigmoid(e), dim=1) for e in experts]
-        alleleNumbers = dict({a: i for i, a in enumerate(alleles)})
+        results = self.moeMerged(*nnInputs[1:-1])
+        hybrid = nnInputs[-1]
+
+        if hybrid:
+            experts, meta = results
+            meta = meta[0];  # Remove unnecessary batch dimension
+            experts = [torch.squeeze(torch.sigmoid(e), dim=1) for e in experts]
+            alleleNumbers = dict({a: i for i, a in enumerate(alleles)})
+        else:
+            experts = [torch.squeeze(torch.sigmoid(results), dim=1)]
 
         def invert(pairing):
             return (pairing[1], pairing[0])
@@ -361,9 +381,15 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
             return predictionQualities, expert0Prediction, expert1Prediction, expert2Prediction
 
         if self.providePredictions:
-            return tuple(list(getPredictionDictionary()) + [meta])
+            if hybrid:
+                return tuple(list(getPredictionDictionary()) + [meta])
+            else:
+                return getExpertPredictions(0)
         else:
-            return getPredictionDictionary()[0]
+            if hybrid:
+                return getPredictionDictionary()[0]
+            else:
+                return getExpertPredictions(0)
 
 
 def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):

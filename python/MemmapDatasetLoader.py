@@ -39,8 +39,9 @@ def tensorify(siteData, maxNumReads=0):
     if (maxNumReads > 0) and (sum(siteData[a]['supportingReadsStrict'][0] for a in alleles) > maxNumReads):
         subsample(siteData, maxNumReads, 'feature', 'supportingReadsStrict');
 
-    if (maxNumReads > 0) and (sum(siteData[a]['supportingReadsStrict2'][0] for a in alleles) > maxNumReads):
-        subsample(siteData, maxNumReads, 'feature2', 'supportingReadsStrict2');
+    if 'supportingReadsStrict2' in siteData[alleles[0]]:
+        if (maxNumReads > 0) and (sum(siteData[a]['supportingReadsStrict2'][0] for a in alleles) > maxNumReads):
+            subsample(siteData, maxNumReads, 'feature2', 'supportingReadsStrict2');
 
     for a in alleles:
         tensors0.append(
@@ -49,19 +50,24 @@ def tensorify(siteData, maxNumReads=0):
                 1, 2
             )
         );
-        tensors1.append(
-            torch.transpose(
-                torch.ByteTensor(siteData[a]['feature2']),
-                1, 2
-            )
-        );
+        if 'feature2' in siteData[a]:
+            tensors1.append(
+                torch.transpose(
+                    torch.ByteTensor(siteData[a]['feature2']),
+                    1, 2
+                )
+            );
+        else:
+            tensors1.append(torch.zeros_like(tensors0[-1])[:1].byte())
         labels.append(
             siteData[a]['label'][0]
         );
 
     totalReadDepth = (
         sum(siteData[a]['supportingReadsStrict'][0] for a in alleles),
-        sum(siteData[a]['supportingReadsStrict2'][0] for a in alleles),
+        sum(siteData[a]['supportingReadsStrict2'][0] for a in alleles) if \
+            ('supportingReadsStrict2' in siteData[alleles[0]]) \
+            else 0
     );
 
     tensors = list(zip(tensors0, tensors1));

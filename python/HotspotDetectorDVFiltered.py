@@ -56,7 +56,7 @@ def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
             ) for rF in readFactory
         ]
     else:
-        container = readFactory(chromosome, begin, end)
+        container = [readFactory(chromosome, begin, end)]
 
     if all(len(c.pileupreads) == 0 for c in container):
         return

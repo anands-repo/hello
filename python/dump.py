@@ -9,6 +9,115 @@ import glob
 CHROMOSOMES = [str(i) for i in range(1, 21)]
 
 
+def main_single(bams, pacbio):
+    train_files = []
+    caller_commands = []
+
+    for bam in bams:
+        for chrom in CHROMOSOMES:
+            bam_string = bam.replace(".", "__").replace("/", "___")
+
+            output_dir = os.path.join(
+                args.workdir,
+                "hotspots_%s_%s" % (bam_string, chrom)
+            )
+
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+
+            # Create hotspot jobs
+            create_cmd = [
+                "python",
+                create_hotspot_jobs_scripts,
+                "--nJobs", "%d" % 500,
+                "--chromosome", "%s" % chrom,
+                "--bam", "%s" % bam,
+                "--ref", "%s" % args.ref,
+                "--log",
+                "--outputDir", "%s" % output_dir
+            ]
+
+            create_cmd += ["--pacbio"] if pacbio else []
+            subprocess.call(create_cmd)
+
+            command = os.path.join(output_dir, "jobs_chromosome%s.sh" % chrom)
+            results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
+
+            logging.info("Created jobs to create hotspots, running to generate hotspots")
+            subprocess.call(
+                "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
+            )
+
+            logging.info("Combining all hotspots and sharding")
+            hotspot_name = os.path.join(output_dir, "hotspots.txt")
+            fhandle = open(hotspot_name, "w")
+            for r in results:
+                if os.path.exists(r):
+                    subprocess.call(["cat", r], stdout=fhandle)
+            fhandle.close()
+
+            # Shard hotspots
+            shard_name = os.path.join(output_dir, "shard")
+            shard_command = [
+                "python",
+                shard_script,
+                "--hotspots", hotspot_name,
+                "--outputPrefix", shard_name
+            ]
+            subprocess.call(shard_command)
+
+            logging.info("Completed sharding, creating caller commands for dumping training data")
+
+            shards = glob.glob("%s*.txt" % shard_name)
+            caller_command_filename = os.path.join(output_dir, "caller_commands.sh")
+
+            with open(caller_command_filename, "w") as fhandle:
+                for shard in shards:
+                    command_string = "python %s" % caller_command
+                    command_string += " --activity %s" % shard
+                    command_string += " --bam %s" % bam
+                    command_string += " --ref %s" % args.ref
+                    command_string += " --truth %s" % args.truth
+                    command_string += " --highconf %s" % args.bed
+                    command_string += " --featureLength %d" % 150
+                    command_string += " --intersect"
+                    command_string += " --reuse"
+                    command_string += " --simple"
+                    command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
+                    command_string += " --pacbio" if pacbio else ""
+                    fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
+
+            logging.info("Created data dump commands")
+
+            if not args.norun_caller:
+                logging.info("Launching data dump")
+                subprocess.call(
+                    "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
+                )
+
+                logging.info("Completed data dump")
+
+                # Collect list of results
+                train_files.extend(glob.glob(os.path.join(output_dir, "*.index")))
+            else:
+                logging.info("Saving data dump command")
+                caller_commands.append(caller_command_filename)
+
+    if not args.norun_caller:
+        training_files = os.path.join(args.workdir, "data.lst")
+
+        with open(training_files, 'w') as dhandle:
+            for line in train_files:
+                dhandle.write(line + "\n")
+
+        logging.info("Training data files in %s" % training_files)
+    else:
+        logging.info("Use the following scripts to dump training data")
+
+        for cmd_file in caller_commands:
+            logging.info("Run file: %s" % cmd_file)
+
+
 def main(ibams, pbams, random_combine=False):
     if not (len(ibams) > 0 and len(pbams) > 0):
         raise NotImplementedError
@@ -17,13 +126,12 @@ def main(ibams, pbams, random_combine=False):
         if len(ibams) > 1 or len(pbams) > 1:
             wanrings.warn("Non-random combine mode not suited for multiple IBAMs and PAMs")
 
-    logging.info("Creating hotspot detection jobs")
-
     train_files = []
     caller_commands = []
 
     for ib in ibams:
         for chrom in CHROMOSOMES:
+            logging.info("Creating hotspot detection jobs for chromosome %s" % chrom)
             pbam_selected = random.sample(pbams, 1)[0] if random_combine else pbams[0]
             ib_string = ib.replace(".", "__").replace("/", "___")
             pb_string = pbam_selected.replace(".", "__").replace("/", "___")
@@ -223,4 +331,10 @@ if __name__ == "__main__":
     )
 
     # Create hotspot jobs
-    main(ibams, pbams, random_combine=args.random_combine)
+    if args.ibam and args.pbam:
+        main(ibams, pbams, random_combine=args.random_combine)
+    else:
+        if args.ibam:
+            main_single(ibams, pacbio=False)
+        else:
+            main_single(pbams, pacbio=True)
