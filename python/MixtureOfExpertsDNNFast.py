@@ -63,6 +63,16 @@ except Exception:
         return x
 
 
+class BinaryClassifierLoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss = torch.nn.BCELoss()
+
+    def forward(self, predictions, target, *args, **kwargs):
+        target = torch.unsqueeze(target, dim=1)
+        return self.loss(torch.sigmoid(predictions), target.float())
+
+
 class Payload:
     def __init__(self, devices, batches, listTypes=list()):
         """
@@ -459,6 +469,7 @@ def train(
     pretrain=False,
     smoothing=0,
     aux_loss=0,
+    binaryClassifier=False,
 ):
     moeType = "advanced"
     tLoader, vLoader, lTrain, lVal = dataloader
@@ -516,24 +527,29 @@ def train(
 
     weights = [1, 1] if not weightLabels else tLoader.relativeFrequency
     prevLoss = float("inf")
-    qLossFn = MixtureOfExpertsTools.MoELoss(
-        regularizer=entropyRegularizer, decay=entropyDecay, provideIndividualLoss=True, weights=weights, smoothing=smoothing, aux_loss=aux_loss,
-    )
 
-    if usePredictionLossInVal:
-        logging.info("Using prediction loss in validation")
-        vLossFn = MixtureOfExpertsTools.PredictionLoss()
-    elif useAccuracyInVal:
-        logging.info("Using accuracy in validation")
-        vLossFn = MixtureOfExpertsTools.Accuracy()
-    elif useSeparateValLoss:
-        logging.info("Using separate validation loss function")
-        vLossFn = MixtureOfExpertsTools.MoELoss(
-            provideIndividualLoss=True
-        )
+    if binaryClassifier:
+        qLossFn = BinaryClassifierLoss()
+        vLossFn = BinaryClassifierLoss()
     else:
-        logging.info("Reusing training loss in validation")
-        vLossFn = qLossFn
+        qLossFn = MixtureOfExpertsTools.MoELoss(
+            regularizer=entropyRegularizer, decay=entropyDecay, provideIndividualLoss=True, weights=weights, smoothing=smoothing, aux_loss=aux_loss,
+        )
+
+        if usePredictionLossInVal:
+            logging.info("Using prediction loss in validation")
+            vLossFn = MixtureOfExpertsTools.PredictionLoss()
+        elif useAccuracyInVal:
+            logging.info("Using accuracy in validation")
+            vLossFn = MixtureOfExpertsTools.Accuracy()
+        elif useSeparateValLoss:
+            logging.info("Using separate validation loss function")
+            vLossFn = MixtureOfExpertsTools.MoELoss(
+                provideIndividualLoss=True
+            )
+        else:
+            logging.info("Reusing training loss in validation")
+            vLossFn = qLossFn
 
     if cuda:
         qLossFn.cuda()
@@ -1246,6 +1262,13 @@ if __name__ == "__main__":
         type=int,
     )
 
+    parser.add_argument(
+        "--binaryClassifier",
+        help="Indicate that we are using a simple binary classifier and not using Mixture of Experts",
+        default=False,
+        action="store_true",
+    )
+
     args = parser.parse_args()
 
     logging.basicConfig(level=(logging.INFO if not args.debug else logging.DEBUG), format='%(asctime)-15s %(message)s')
@@ -1349,6 +1372,7 @@ if __name__ == "__main__":
         pretrain=args.pretrain,
         smoothing=args.smoothing,
         aux_loss=args.aux_loss,
+        binaryClassifier=args.binaryClassifier,
     )
 
     if logWriter is not None:

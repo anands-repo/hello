@@ -141,9 +141,12 @@ class MoEMergedAdvanced(torch.nn.Module):
         reducedFramesPerAllele0 = self.alleleConv0(
             reduceSlots(readLevelConv0, numReadsPerAllele[0])
         )
-        reducedFramesPerAllele1 = self.alleleConv1(
-            reduceSlots(readLevelConv1, numReadsPerAllele[1])
-        ) if (self.alleleConv1 is not None and readLevelConv1 is not None) else None
+        if (self.alleleConv1 is not None) and (readLevelConv1 is not None):
+            reducedFramesPerAllele1 = self.alleleConv1(
+                reduceSlots(readLevelConv1, numReadsPerAllele[1])
+            )
+        else:
+            reducedFramesPerAllele1 = None
         return reducedFramesPerAllele0, reducedFramesPerAllele1
 
     def preparePerSiteFramesFromReads(self, conv0, conv1, numAllelesPerSite, numReadsPerAllele):
@@ -286,7 +289,7 @@ class MoEMergedAdvanced(torch.nn.Module):
 
             return [ngsPredictions, tgsPredictions, hybPredictions], meta
         else:
-            ngsPredictions
+            return ngsPredictions
 
 
 class MoEMergedWrapperAdvanced(torch.nn.Module):
@@ -392,37 +395,29 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
                 return getExpertPredictions(0)
 
 
-def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
-    ngsConvolver = NNTools.Network(importlib.import_module(configDict['readConv']).config)
-    tgsConvolver = NNTools.Network(importlib.import_module(configDict['readConv']).config)
-    meta = NNTools.Network(importlib.import_module(configDict['meta']).config)
+def make_network(configDict, name, module_to_use=NNTools.Network):
+    if name in configDict and configDict[name]:
+        return module_to_use(importlib.import_module(configDict[name]).config)
+    else:
+        return None
 
-    alleleConvNgs = NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
-    alleleConvTgs = NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
-    graphConvNgs = NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
-    graphConvTgs = NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
+
+def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
+    ngsConvolver = make_network(configDict, "readConvNGS")  # NNTools.Network(importlib.import_module(configDict['readConv']).config)
+    tgsConvolver = make_network(configDict, "readConvTGS")  # NNTools.Network(importlib.import_module(configDict['readConv']).config)
+    meta = make_network(configDict, "meta")  # NNTools.Network(importlib.import_module(configDict['meta']).config)
+
+    alleleConvNgs = make_network(configDict, "alleleConvSingleNGS")  # NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
+    alleleConvTgs = make_network(configDict, "alleleConvSingleTGS")  # NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
+    graphConvNgs = make_network(configDict, "graphConvSingleNGS")  # NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
+    graphConvTgs = make_network(configDict, "graphConvSingleTGS")  # NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
 
     # It is possible to avoid using graph convolver hybrid; in
     # this case, use a dummy module that always outputs a small value
-    graphConvHybConf = importlib.import_module(configDict['graphConvHybrid']).config
+    graphConvHyb = make_network(configDict, "graphConvHybrid")  # importlib.import_module(configDict['graphConvHybrid']).config
 
-    if len(graphConvHybConf) > 0:
-        graphConvHyb = NNTools.Network(graphConvHybConf)
-    else:
-        graphConvHyb = DummyGraphNetwork()
-
-    if 'convCombiner' in configDict:
-        alleleConvCombiner = ConvCombiner(importlib.import_module(configDict['convCombiner']).config)
-
-        # New code to force useAdditive only on alleleLevelCombiner; 2020/02/12
-        if ('noSiteLevelCombiner' in configDict) and configDict['noSiteLevelCombiner']:
-            siteConvCombiner = None
-        else:
-            siteConvCombiner = ConvCombiner(importlib.import_module(configDict['convCombiner']).config)
-        # 2020/02/12 over
-    else:
-        alleleConvCombiner = None
-        siteConvCombiner = None
+    alleleConvCombiner = make_network(configDict, "alleleConvCombiner", module_to_use=ConvCombiner)
+    siteConvCombiner = make_network(configDict, "siteConvCombiner", module_to_use=ConvCombiner)
 
     if 'kwargs' in configDict:
         kwargs = configDict['kwargs']

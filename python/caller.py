@@ -257,7 +257,6 @@ def addToHDF5File(
         mainGroup = fhandle.create_group(groupName);
 
         for i, (allele, tensor, label) in enumerate(zip(alleles, tensors, labels)):
-            print("Creating allele", allele)
             alleleGroup = mainGroup.create_group(allele);
             alleleGroup.create_dataset('label', shape=(1,), dtype='float32');
             alleleGroup.create_dataset('feature', shape=tensor.shape, dtype=tensor.dtype);
