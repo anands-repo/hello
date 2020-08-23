@@ -647,6 +647,14 @@ class Compressor(torch.nn.Module):
                 ))
             )
 
+        last_layer = torch.nn.Conv1d(
+            in_channels=num_inputs,
+            out_channels=num_inputs,
+            kernel_size=1,
+        )
+
+        layers.append(last_layer)
+
         self.layers = torch.nn.Sequential(*layers)
 
     def forward(self, tensor):
