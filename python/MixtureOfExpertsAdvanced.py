@@ -60,6 +60,123 @@ class DummyGraphNetwork(torch.nn.Module):
         return torch.unsqueeze(self.baseTensor.repeat(tensors.shape[0]), dim=1)
 
 
+def batch_dot_product(a, b):
+    return torch.matmul(
+        a.view(a.shape[0], 1, a.shape[1]),
+        b.view(b.shape[0], b.shape[1], 1)
+    )
+
+
+class MoEAttention(torch.nn.Module):
+    def __init__(
+        self,
+        read_convolver0,
+        read_convolver1,
+        compressor0,
+        compressor1,
+        compressor2,
+        meta,
+    ):
+        """
+        Attention-based Mixture-of-Experts model
+
+        :param read_convolver?: NNTools.Network
+            Convolutional modules for convolving reads of different types
+
+        :param compressor?: NNTools.Network
+            Dilated convolutional modules for compressing read features along the length-dimension
+
+        :param meta: NNTools.Network
+            Meta-expert DNN. Neural network works off-of compressed site-level features
+        """
+        super().__init__()
+        self.read_convolver0 = read_convolver0
+        self.read_convolver1 = read_convolver1
+        self.compressor0 = compressor0
+        self.compressor1 = compressor1
+        self.compressor2 = compressor2
+        self.meta = meta
+
+    def compress_and_predict(
+        self,
+        reduced_frames_for_allele,
+        numAllelesPerSite,
+        compressor_index
+    ):
+        # Compress inputs (allele-level)
+        compressor = getattr(self, 'compressor%d' % compressor_index)
+        compressed_features_allele = compressor(reduced_frames_for_allele)
+
+        # Prepare tensors for interleaving etc
+        num_alleles_per_site_tensor = torch.LongTensor(numAllelesPerSite)
+        if reduced_frames_for_allele.is_cuda:
+            num_alleles_per_site_tensor = num_alleles_per_site_tensor.cuda(device=reduced_frames_for_allele.get_device())
+
+        # Prepare per-site compressed features and expand them to allele-level
+        reduced_frames_for_site = reduceSlots(
+            reduced_frames_for_allele, num_alleles_per_site_tensor
+        )
+        compressed_features_site = compressor(reduced_frames_for_site)
+        expanded_frames_for_site = torch.repeat_interleave(
+            compressed_features_site, num_alleles_per_site_tensor, dim=0
+        )
+
+        # Attention computation for prediction
+        expert_predictions = batch_dot_product(
+            expanded_frames_for_site, compressed_features_allele
+        ) / (expanded_frames_for_site.shape[1] ** 0.5)
+
+        print(expert_predictions)
+
+        return expert_predictions, compressed_features_site
+
+    def expert_predictions(self, read_conv, numAllelesPerSite, numReadsPerAllele, compressor_index):
+        reduced_frames_for_allele = reduceSlots(read_conv, numReadsPerAllele)
+        expert_predictions, frames_at_site = self.compress_and_predict(
+            reduced_frames_for_allele,
+            numAllelesPerSite,
+            compressor_index,
+        )
+
+        return torch.squeeze(expert_predictions, dim=-1), reduced_frames_for_allele, frames_at_site
+
+    def forward(self, tensors, numAllelesPerSite, numReadsPerAllele, *args, **kwargs):
+        read_conv0 = self.read_convolver0(tensors[0].float())
+
+        expert0_predictions, reduced_frames0_for_allele, _ = self.expert_predictions(
+            read_conv0,
+            numAllelesPerSite,
+            numReadsPerAllele[0],
+            compressor_index=0
+        )
+
+        if self.read_convolver1 is not None:
+            read_conv1 = self.read_convolver1(tensors[1].float())
+
+            expert1_predictions, reduced_frames1_for_allele, _ = self.expert_predictions(
+                read_conv1,
+                numAllelesPerSite,
+                numReadsPerAllele[1],
+                compressor_index=1
+            )
+
+            reduced_frames2_for_allele = reduced_frames0_for_allele + reduced_frames1_for_allele
+            expert2_predictions, frames_at_site = self.compress_and_predict(
+                reduced_frames2_for_allele,
+                numAllelesPerSite,
+                compressor_index=2
+            )
+            expert2_predictions = torch.squeeze(expert2_predictions, dim=2)
+
+            meta_predictions = torch.softmax(
+                self.meta(frames_at_site), dim=-1
+            )
+
+            return [expert0_predictions, expert1_predictions, expert2_predictions], meta_predictions
+        else:
+            return expert0_predictions
+
+
 class MoEMergedAdvanced(torch.nn.Module):
     """
     Mixture-of-experts DNN with read convolution parameter sharing
@@ -435,6 +552,27 @@ def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
         alleleConvCombiner=alleleConvCombiner,
         siteConvCombiner=siteConvCombiner,
         **kwargs
+    )
+
+    return moe
+
+
+def create_moe_attention_model(config_dict, *args, **kwargs):
+    read_convolver0 = make_network(config_dict, "readConvNGS")
+    read_convolver1 = make_network(config_dict, "readConvTGS")
+    meta = make_network(config_dict, "meta")
+
+    compressor0 = make_network(config_dict, "compressor0")
+    compressor1 = make_network(config_dict, "compressor1")
+    compressor2 = make_network(config_dict, "compressor2")
+
+    moe = MoEAttention(
+        read_convolver0,
+        read_convolver1,
+        compressor0,
+        compressor1,
+        compressor2,
+        meta,
     )
 
     return moe

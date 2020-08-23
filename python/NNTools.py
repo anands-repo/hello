@@ -1,5 +1,6 @@
 import torch
 import logging
+import math
 
 
 def initCNN(layer):
@@ -11,6 +12,54 @@ def initCNN(layer):
         if hasattr(layer, 'bias'):
             if layer.bias is not None:
                 layer.bias.data.fill_(0.1);
+
+
+def SingleLinearLayer(
+    in_features,
+    out_features,
+    dropout=0,
+    batch_norm=True,
+    activation="ReLU",
+    activation_args=dict(),
+):
+    config = [
+        {
+            "type": "Linear",
+            "kwargs": {
+                "in_features": in_features,
+                "out_features": out_features,
+            }
+        },
+    ]
+
+    if batch_norm:
+        config.append(
+            {
+                "type": "BatchNorm1d",
+                "kwargs": {
+                    "num_features": out_features,
+                }
+            }
+        )
+
+    config.append(
+        {
+            "type": activation,
+            "kwargs": activation_args
+        }
+    )
+
+    if dropout > 0:
+        config.append(
+            {
+                "type": "Dropout",
+                "kwargs": {
+                    "p": dropout
+                }
+            }
+        )
+
+    return config
 
 
 def SingleConvLayer(
@@ -540,13 +589,6 @@ class Inception(torch.nn.Module):
         return torch.cat(branchResults, dim=1)
 
 
-torch.nn.Flatten = Flatten
-torch.nn.GlobalPool = GlobalPool
-torch.nn.ResidualBlock = ResidualBlock
-torch.nn.Noop = Noop
-torch.nn.Inception = Inception
-
-
 class Network(torch.nn.Module):
     """
     Base Network class
@@ -565,3 +607,57 @@ class Network(torch.nn.Module):
 
     def forward(self, tensors, *args, **kwargs):
         return self.network(tensors)
+
+
+class Pad1d(torch.nn.Module):
+    def __init__(self, padleft, padright):
+        super().__init__()
+        self.padleft = padleft
+        self.padright = padright
+
+    def forward(self, tensor):
+        return torch.nn.functional.pad(
+            tensor, pad=(self.padleft, self.padright)
+        )
+
+
+class Compressor(torch.nn.Module):
+    """
+    A layer which performs compression
+    """
+    def __init__(self, input_length, num_inputs):
+        super().__init__()
+        num_layers = math.ceil(math.log2(input_length))
+        layers = []
+
+        for i in range(num_layers):
+            dilation = 2 ** i
+            padding = (dilation - dilation // 2, dilation // 2)
+            layers.append(
+                Pad1d(*padding)
+            )
+            layers.append(
+                Network(SingleConvLayer(
+                    inChannels=num_inputs,
+                    outChannels=num_inputs,
+                    kernelSize=2,
+                    padding=0,
+                    dilation=dilation,
+                    stride=1,
+                ))
+            )
+
+        self.layers = torch.nn.Sequential(*layers)
+
+    def forward(self, tensor):
+        res = tensor
+        res = torch.mean(self.layers(res), dim=-1)
+        return res
+
+
+torch.nn.Compressor = Compressor
+torch.nn.Flatten = Flatten
+torch.nn.GlobalPool = GlobalPool
+torch.nn.ResidualBlock = ResidualBlock
+torch.nn.Noop = Noop
+torch.nn.Inception = Inception

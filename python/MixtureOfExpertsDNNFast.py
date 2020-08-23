@@ -470,13 +470,20 @@ def train(
     smoothing=0,
     aux_loss=0,
     binaryClassifier=False,
+    moeType="advanced",
 ):
-    moeType = "advanced"
+    # moeType = "advanced"
     tLoader, vLoader, lTrain, lVal = dataloader
     configDict = importlib.import_module(configFile).configDict
 
     if moeType == "advanced":
         searcher = WrapperForDataParallel(MixtureOfExpertsAdvanced.createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=useSeparateMeta))
+    elif moeType == "attention":
+        searcher = WrapperForDataParallel(
+            MixtureOfExpertsAdvanced.create_moe_attention_model(
+                configDict
+            )
+        )
     else:
         raise NotImplementedError("Only advanced MixtureOfExperts is accepted")
 
@@ -1269,6 +1276,13 @@ if __name__ == "__main__":
         action="store_true",
     )
 
+    parser.add_argument(
+        "--moeType",
+        help="Type of MoE to use",
+        default="advanced",
+        choices=["advanced", "attention"]
+    )
+
     args = parser.parse_args()
 
     logging.basicConfig(level=(logging.INFO if not args.debug else logging.DEBUG), format='%(asctime)-15s %(message)s')
@@ -1373,6 +1387,7 @@ if __name__ == "__main__":
         smoothing=args.smoothing,
         aux_loss=args.aux_loss,
         binaryClassifier=args.binaryClassifier,
+        moeType=args.moeType,
     )
 
     if logWriter is not None:
