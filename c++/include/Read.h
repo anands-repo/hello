@@ -10,7 +10,10 @@
 #include "Reference.h"
 #ifndef _READ_TEST_
 #include "utils.h"
+#include <boost/python.hpp>
+namespace p = boost::python;
 #endif
+#include <iostream>
 
 // This is patchy, but for testing purposes
 // this needs to be done
@@ -32,10 +35,23 @@ using namespace std;
 
 enum AlignedBaseStatus { Success, Fail, LeftPartial, RightPartial };
 
+template <class T>
+vector<T> list_converter(const p::list& array) {
+    return vector<T>(
+        p::stl_input_iterator<T>(array),
+        p::stl_input_iterator<T>()
+    );
+}
+
 struct AlignedBases {
     string first;
     AlignedBaseStatus second;
     long third;
+};
+
+struct TruthSet {
+    vector<pair<string, string> > truth_alleles;
+    bool valid;
 };
 
 struct AllelicRecord {
@@ -64,6 +80,13 @@ struct SiteRecord {
         long start_,
         long stop_
     ) : alleles(alleles_), start(start_), stop(stop_) {};
+#ifndef _READ_TEST_
+    SiteRecord(
+        const p::list& alleles_,
+        long start_,
+        long stop_
+    ) : alleles(list_converter<string>(alleles_)), start(start_), stop(stop_) {};
+#endif
     SiteRecord() = default;
     SiteRecord(const SiteRecord&) = default;
     SiteRecord(SiteRecord&&) = default;
@@ -158,5 +181,11 @@ void enumerate_all_haplotypes(
 
 // Utility function to obtain a list of all reference bases in a certain range
 string get_reference_bases(const Reference&, long, long);
+
+#ifndef _READ_TEST_
+TruthSet get_ground_truth_alleles(
+    const p::list&, const string&, const string&, const string&, long
+);
+#endif
 
 #endif

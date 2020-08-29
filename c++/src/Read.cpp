@@ -331,6 +331,72 @@ string get_reference_bases(const Reference& ref, long start, long stop) {
     return sstr.str();
 }
 
+#ifndef _READ_TEST_
+TruthSet get_ground_truth_alleles(
+    const p::list& truth_records,
+    const string& reference_segment,
+    const string& haplotype0,
+    const string& haplotype1,
+    long left_position
+) {
+    // Prepare all data for enumerating candidates
+    Reference ref(reference_segment, left_position);
+    vector<SiteRecord> truth_records_cpp(list_converter<SiteRecord>(truth_records));
+    unordered_map<string, vector<AllelicRecord> > candidates;
+
+    // Enumerate all candidate alleles
+    enumerate_all_haplotypes(
+        truth_records_cpp,
+        ref,
+        left_position,
+        left_position + reference_segment.size(),
+        candidates,
+        0
+    );
+
+    for (auto& item: candidates) {
+        cout << "Found candidate haplotype" << item.first << endl;
+    }
+
+    TruthSet results;
+
+    // If neither ground-truth haplotype is found, reject the labeling
+    if (candidates.find(haplotype0) == candidates.end()) {
+        results.valid = false;
+        return results;
+    }
+
+    if (candidates.find(haplotype1) == candidates.end()) {
+        results.valid = false;
+        return results;
+    }
+
+    // Collect the candidate alleles
+    results.valid = true;
+
+    vector<string> candidates0;
+    vector<string> candidates1;
+
+    for (auto& truth_allele: candidates.find(haplotype0)->second) {
+        candidates0.push_back(truth_allele.allele);
+    }
+
+    for (auto& truth_allele: candidates.find(haplotype1)->second) {
+        candidates1.push_back(truth_allele.allele);
+    }
+
+    for (long i = 0; i < candidates0.size(); i++) {
+        const string& a0 = candidates0[i];
+        const string& a1 = candidates1[i];
+        results.truth_alleles.push_back(
+            pair<string, string>(a0, a1)
+        );
+    }
+
+    return results;
+}
+#endif
+
 #ifdef _READ_TEST_
 int main() {
     /*

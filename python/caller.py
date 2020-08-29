@@ -61,6 +61,98 @@ def chromosomesInCluster(hotspots):
     return chromosomes;
 
 
+def number_alleles(alleles, ref_allele):
+    """
+    Add VCF_type numbering to alleles
+
+    :param alleles: list
+        List of alleles
+
+    :param ref_allele: str
+        Reference allele
+
+    :return: dict
+        A dictionary mapping alleles to number
+    """
+    numbering = dict()
+    counter = 1
+
+    for a in alleles:
+        if a != ref_allele:
+            numbering[a] = counter
+            counter += 1
+
+    numbering[ref_allele] = 0
+
+    return numbering
+
+
+def dump_vcfs_from_labels(entry, ref, vhandle):
+    """
+    Given site data, dump out a vcf file. This is to test if the site data has been
+    correctly labeled or not
+
+    :param entry: dict
+        Site data dictionary
+
+    :param ref: ReferenceCache
+        Accessor for indexed references
+
+    :param vhandle: File
+        File handle into which to write VCF
+    """
+    logging.debug("Received item from datagen")
+    site_type = 'PASS'
+
+    if 'type' in entry:
+        site_type = entry['type']
+        logging.debug("Discarding entry")
+        return
+
+    alleles = entry['alleles']
+    chromosome = entry['chromosome']
+    ref.chrom = chromosome
+    start = entry['start']
+    stop = entry['stop']
+    ref_allele = ''.join(ref[start: stop])
+    labels = entry['labels']
+    allele_numbering = number_alleles(alleles, ref_allele)
+    positive_alleles = set(a for a, l in zip(alleles, labels) if l > 0)
+    genotypes = [allele_numbering[a] for a in positive_alleles]
+    alt_alleles = [a for a in alleles if a != ref_allele]
+
+    if len(genotypes) == 0:
+        genotypes = [0, 0]
+        site_type = 'UNLABELED'
+
+    if len(genotypes) == 1:
+        genotypes += genotypes
+
+    if len(alt_alleles) == 0:
+        alt_alleles = [ref_allele]
+        site_type = 'NO_ALT'
+
+    logging.debug("Creating vcf record")
+
+    record = createVcfRecord(
+        chromosome,
+        start,
+        ref,
+        [0],
+        [ref_allele],
+        [alt_alleles],
+        [genotypes],
+        string="LabeledFromGroundTruth",
+        qual=50,
+        qualifier=site_type
+    )
+
+    logging.debug("Completed ceating vcf record")
+
+    for r in record:
+        vhandle.write(r + '\n')
+
+
 def intersect(vcf, bed, hotspots, outputPrefix):
     """
     Given a hotspots file, determine minimally spanning bed/vcf files
@@ -246,7 +338,6 @@ def addToHDF5File(
     """
     logging.debug("Writing chr, start, stop = %s, %d, %d to file" % (chromosome, start, stop));
     groupName = '_'.join([chromosome, str(start), str(stop)]);  # We will maintain a flat hierarchy
-    print(groupName)
 
     try:
         # If group already exists, delete it: it might be erroneous
@@ -280,7 +371,7 @@ def addToHDF5File(
         mainGroup['siteLabel'][:] = siteLabel;
 
 
-def dumpTrainingData(datagen, filename, hybrid=False):
+def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None):
     """
     Dump training data to disk
 
@@ -292,10 +383,20 @@ def dumpTrainingData(datagen, filename, hybrid=False):
 
     :param hybrid: bool
         Whether we are operating in hybrid mode or not
+
+    :param dump_vcf: bool
+        Dump vcf file from labeled ground-truth to test labeling accuracy
+
+    :param ref: PySamFastaWrapper
+        Reference reader
     """
     missedCalls = [];
     tooLong = [];
     hdf5 = filename + ".hdf5";
+    vcf = filename + ".labeled.vcf"
+
+    if dump_vcf:
+        vhandle = open(vcf, 'w')
 
     with h5py.File(hdf5, 'w') as fhandle:
         for i, entry in enumerate(datagen):
@@ -311,7 +412,12 @@ def dumpTrainingData(datagen, filename, hybrid=False):
             if (i + 1) % 100 == 0:
                 logging.info("Completed %d locations" % (i + 1));
 
+            dump_vcfs_from_labels(entry, ref, vhandle)
+
     postProcessHdf5(hdf5, filename, hybrid=hybrid);
+
+    if dump_vcf:
+        vhandle.close()
 
 
 def scoreSite(siteDict, network, hybrid=False):
@@ -333,7 +439,7 @@ def scoreSite(siteDict, network, hybrid=False):
         if hybrid:
             tensorPacket = (torch.Tensor(t1), torch.Tensor(siteDict['tensors2'][i]));
         else:
-            tensorPacket = torch.Tensor(t1);
+            tensorPacket = (torch.Tensor(t1), None);
 
         featureDict[allele] = tensorPacket;
 
@@ -568,7 +674,24 @@ if __name__ == "__main__":
         action="store_true",
     )
 
+    parser.add_argument(
+        "--test_labeling",
+        help="This mode uses ground-truth variants etc, and dumps out a vcf file to test whether labeling is correct",
+        action="store_true",
+        default=False,        
+    )
+
+    parser.add_argument(
+        "--only_contained",
+        help="For training data dump, only use locations that are fully contained in confident regions",
+        default=False,
+        action="store_true"
+    )
+
     args = parser.parse_args();
+
+    if args.only_contained:
+        trainDataTools.STRICT_INTERSECTION = True
 
     libCallability.initLogging(args.debug);
     logging.basicConfig(
@@ -641,7 +764,13 @@ if __name__ == "__main__":
     featureList = None;
 
     if args.highconf is not None:
-        dumpTrainingData(datagen, args.outputPrefix, hybrid=(len(bamfiles) > 1));
+        # if not args.test_labeling:
+        #     dumpTrainingData(datagen, args.outputPrefix, hybrid=(len(bamfiles) > 1));
+        # else:
+        #     cache = ReferenceCache(database=args.ref);
+        #     dump_vcfs_from_labels(datagen, args.outputPrefix + ".labeled", cache)
+        ref = ReferenceCache(database=args.ref)
+        dumpTrainingData(datagen, args.outputPrefix, hybrid=(len(bamfiles) > 1), dump_vcf=True, ref=ref);
     else:
         assert(args.network is not None), "Provide DNN for variant calling";
         cache = ReferenceCache(database=args.ref);

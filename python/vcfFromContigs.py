@@ -158,7 +158,9 @@ def fixEmptyAlleles(chromosome, location, ref, alts, referenceCache):
 
     return foundEmptyAllele, chromosome, location, ref, alts;
 
-def createVcfRecord(chromosome, base, referenceCache, offsets, refs, alts, gts, string="BeamSearchResults", qual=30):
+def createVcfRecord(
+    chromosome, base, referenceCache, offsets, refs, alts, gts, string="BeamSearchResults", qual=30, qualifier="PASS"
+):
     """
     Creates normalized VCF-like records from processed variants
     """
@@ -170,40 +172,44 @@ def createVcfRecord(chromosome, base, referenceCache, offsets, refs, alts, gts, 
         # Ensure that there is no empty allele
         _, chromosome, location, ref, alt = fixEmptyAlleles(chromosome, base+offset, ref, alt, referenceCache);
 
-        # Right parsimony
-        while changeInAlleles:
-            changeInAlleles = False;
+        # If all alleles are identical, skip any parsimony checks
+        if len(alt) == 0 or all(a == ref for a in alt):
+            pass
+        else:
+            # Right parsimony
+            while changeInAlleles:
+                changeInAlleles = False;
 
-            # If right-most bases are identical, remove them and continue to normalize
-            rightBase = set();
-            rightBase.add(ref[-1]);
-            for a in alt: rightBase.add(a[-1]);
+                # If right-most bases are identical, remove them and continue to normalize
+                rightBase = set();
+                rightBase.add(ref[-1]);
+                for a in alt: rightBase.add(a[-1]);
 
-            if len(rightBase) == 1:
-                ref = ref[:-1];
-                alt = [a[:-1] for a in alt];
-                changeInAlleles = True;
+                if len(rightBase) == 1:
+                    ref = ref[:-1];
+                    alt = [a[:-1] for a in alt];
+                    changeInAlleles = True;
 
-            # If there is an empty allele, extend all alleles
-            _, chromosome, location, ref, alt = fixEmptyAlleles(chromosome, location, ref, alt, referenceCache);
-            changeInAlleles = changeInAlleles or _;
+                # If there is an empty allele, extend all alleles
+                _, chromosome, location, ref, alt = fixEmptyAlleles(chromosome, location, ref, alt, referenceCache);
+                changeInAlleles = changeInAlleles or _;
 
-        leftParsimonious = False;
+            leftParsimonious = False;
 
-        while not leftParsimonious:
-            if (len(ref) > 1) and (min([len(a) for a in alt]) > 1):
-                leftBase = set();
-                leftBase.add(ref[0]);
-                for a in alt: leftBase.add(a[0]);
+            while not leftParsimonious:
+                if (len(ref) > 1) and (min([len(a) for a in alt]) > 1):
+                    leftBase = set();
+                    leftBase.add(ref[0]);
+                    for a in alt: leftBase.add(a[0]);
 
-                if len(leftBase) == 1:
-                    location += 1;
-                    ref = ref[1:];
-                    alt = [a[1:] for a in alt];
+                    if len(leftBase) == 1:
+                        location += 1;
+                        ref = ref[1:];
+                        alt = [a[1:] for a in alt];
+                    else:
+                        leftParsimonious = True;
                 else:
                     leftParsimonious = True;
-            else:
-                leftParsimonious = True;
 
         entry = "%s\t%d\t.\t%s\t%s\t%f\t%s\t%s\tGT\t%s"%(
             str(chromosome),
@@ -211,7 +217,7 @@ def createVcfRecord(chromosome, base, referenceCache, offsets, refs, alts, gts, 
             ref,
             ','.join(alt),
             qual,
-            'PASS',
+            qualifier,  # 'PASS'
             string,
             '/'.join([str(x) for x in gt]),
         );

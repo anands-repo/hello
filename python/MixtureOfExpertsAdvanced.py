@@ -75,6 +75,10 @@ class MoEAttention(torch.nn.Module):
         compressor0,
         compressor1,
         compressor2,
+        xattn0,
+        xattn1,
+        xattn2,
+        combiner,
         meta,
     ):
         """
@@ -86,6 +90,9 @@ class MoEAttention(torch.nn.Module):
         :param compressor?: NNTools.Network
             Dilated convolutional modules for compressing read features along the length-dimension
 
+        :param xattn?: NNTools.Network
+            Cross-attention modules for comparing allele-level to site-level features
+
         :param meta: NNTools.Network
             Meta-expert DNN. Neural network works off-of compressed site-level features
         """
@@ -95,6 +102,10 @@ class MoEAttention(torch.nn.Module):
         self.compressor0 = compressor0
         self.compressor1 = compressor1
         self.compressor2 = compressor2
+        self.xattn0 = xattn0
+        self.xattn1 = xattn1
+        self.xattn2 = xattn2
+        self.combiner = combiner
         self.meta = meta
 
     def compress_and_predict(
@@ -107,7 +118,7 @@ class MoEAttention(torch.nn.Module):
         compressor = getattr(self, 'compressor%d' % compressor_index)
         compressed_features_allele = compressor(reduced_frames_for_allele)
 
-        # Prepare tensors for interleaving etc
+        # Prepare tensor version
         num_alleles_per_site_tensor = torch.LongTensor(numAllelesPerSite)
         if reduced_frames_for_allele.is_cuda:
             num_alleles_per_site_tensor = num_alleles_per_site_tensor.cuda(device=reduced_frames_for_allele.get_device())
@@ -122,11 +133,11 @@ class MoEAttention(torch.nn.Module):
         )
 
         # Attention computation for prediction
-        expert_predictions = batch_dot_product(
-            expanded_frames_for_site, compressed_features_allele
-        ) / (expanded_frames_for_site.shape[1] ** 0.5)
+        attn_network = getattr(self, 'xattn%d' % compressor_index)
 
-        print(expert_predictions)
+        expert_predictions = attn_network(
+            (compressed_features_allele, expanded_frames_for_site)
+        )
 
         return expert_predictions, compressed_features_site
 
@@ -138,7 +149,7 @@ class MoEAttention(torch.nn.Module):
             compressor_index,
         )
 
-        return torch.squeeze(expert_predictions, dim=-1), reduced_frames_for_allele, frames_at_site
+        return expert_predictions, reduced_frames_for_allele, frames_at_site
 
     def forward(self, tensors, numAllelesPerSite, numReadsPerAllele, *args, **kwargs):
         read_conv0 = self.read_convolver0(tensors[0].float())
@@ -160,13 +171,14 @@ class MoEAttention(torch.nn.Module):
                 compressor_index=1
             )
 
-            reduced_frames2_for_allele = reduced_frames0_for_allele + reduced_frames1_for_allele
+            reduced_frames2_for_allele = self.combiner(
+                (reduced_frames0_for_allele, reduced_frames1_for_allele)
+            )
             expert2_predictions, frames_at_site = self.compress_and_predict(
                 reduced_frames2_for_allele,
                 numAllelesPerSite,
                 compressor_index=2
             )
-            expert2_predictions = torch.squeeze(expert2_predictions, dim=2)
 
             meta_predictions = torch.softmax(
                 self.meta(frames_at_site), dim=-1
@@ -445,14 +457,18 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
         alleles = nnInputs[0]
         results = self.moeMerged(*nnInputs[1:-1])
         hybrid = nnInputs[-1]
+        alleleNumbers = dict({a: i for i, a in enumerate(alleles)})
 
         if hybrid:
             experts, meta = results
+            print(meta)
             meta = meta[0];  # Remove unnecessary batch dimension
             experts = [torch.squeeze(torch.sigmoid(e), dim=1) for e in experts]
-            alleleNumbers = dict({a: i for i, a in enumerate(alleles)})
         else:
-            experts = [torch.squeeze(torch.sigmoid(results), dim=1)]
+            expert0 = torch.squeeze(torch.sigmoid(results), dim=1)
+            experts = [expert0, torch.zeros_like(expert0), torch.zeros_like(expert0)]
+            meta = torch.zeros(3)
+            meta[0] = 1
 
         def invert(pairing):
             return (pairing[1], pairing[0])
@@ -501,20 +517,15 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
             return predictionQualities, expert0Prediction, expert1Prediction, expert2Prediction
 
         if self.providePredictions:
-            if hybrid:
-                return tuple(list(getPredictionDictionary()) + [meta])
-            else:
-                return getExpertPredictions(0)
+            return tuple(list(getPredictionDictionary()) + [meta])
         else:
-            if hybrid:
-                return getPredictionDictionary()[0]
-            else:
-                return getExpertPredictions(0)
+            return getPredictionDictionary()[0]
 
 
 def make_network(configDict, name, module_to_use=NNTools.Network):
     if name in configDict and configDict[name]:
-        return module_to_use(importlib.import_module(configDict[name]).config)
+        configuration = importlib.import_module(configDict[name]).config
+        return module_to_use(configuration)
     else:
         return None
 
@@ -558,13 +569,19 @@ def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
 
 
 def create_moe_attention_model(config_dict, *args, **kwargs):
-    read_convolver0 = make_network(config_dict, "readConvNGS")
-    read_convolver1 = make_network(config_dict, "readConvTGS")
-    meta = make_network(config_dict, "meta")
+    read_convolver0 = make_network(config_dict, "read_conv0")
+    read_convolver1 = make_network(config_dict, "read_conv1")
 
     compressor0 = make_network(config_dict, "compressor0")
     compressor1 = make_network(config_dict, "compressor1")
     compressor2 = make_network(config_dict, "compressor2")
+
+    xattn0 = make_network(config_dict, "xattn0")
+    xattn1 = make_network(config_dict, "xattn1")
+    xattn2 = make_network(config_dict, "xattn2")
+
+    combiner = make_network(config_dict, "combiner")
+    meta = make_network(config_dict, "meta")
 
     moe = MoEAttention(
         read_convolver0,
@@ -572,6 +589,10 @@ def create_moe_attention_model(config_dict, *args, **kwargs):
         compressor0,
         compressor1,
         compressor2,
+        xattn0,
+        xattn1,
+        xattn2,
+        combiner,
         meta,
     )
 

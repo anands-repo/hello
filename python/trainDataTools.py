@@ -22,6 +22,8 @@ import PileupDataTools
 import collections
 import intervaltree
 from timeit import default_timer as timer
+import labeler
+from labeler import RegionTooLongException
 
 try:
     profile
@@ -32,6 +34,9 @@ except Exception:
 DATAGEN_TIME = 0;
 TENSOR_TIME = 0;
 INTERNAL_TIME0 = 0;
+GUARD_BAND = 3
+STRICT_INTERSECTION = False
+MAX_ITEMS_PER_GROUP = 8
 
 
 def genotype(record, index=0):
@@ -63,14 +68,17 @@ def checkIntersection(hotspot, bedInterval):
     :param bedInterval: intervaltree.IntervalTree
         High confidence intervals
     """
-    bedItems = bedInterval[hotspot[0]: hotspot[1]];
+    bedItems = bedInterval[hotspot[0]: hotspot[1]]
 
     for item in bedItems:
         # Check whether any item completely contains the given hotspot
-        if item[0] <= hotspot[0] < hotspot[1] <= item[1]:
-            return True;
+        if STRICT_INTERSECTION:
+            if item[0] <= hotspot[0] < hotspot[1] <= item[1]:
+                return True
+        else:
+            return True
 
-    return False;
+    return False
 
 
 def checkIntersectionRecord(record, bedInterval):
@@ -94,7 +102,10 @@ def bedReader(bedfile):
         for line in fhandle:
             entries = line.split();
             chr_, start, stop = entries[0], int(entries[1]), int(entries[2]);
-            bedRegions[chr_].addi(start, stop, None);
+            bedRegions[chr_].addi(start - GUARD_BAND, stop + GUARD_BAND, None);
+
+    for chromosome in bedRegions:
+        bedRegions[chromosome].merge_overlaps()
 
     return bedRegions;
 
@@ -382,6 +393,9 @@ def createRecord(chromosome, position, refAllele, allelesAtSite):
     """
     allelesNoRef = deepcopy(allelesAtSite);
 
+    if len(refAllele) == 0:
+        raise ValueError("Obtained empty reference")
+
     if refAllele in allelesNoRef:
         allelesNoRef.remove(refAllele);
 
@@ -462,7 +476,7 @@ def clusterLocations(locations, distance=PileupDataTools.MIN_DISTANCE, maxAllele
         if len(cluster) == 0:
             cluster.append(location);
         else:
-            if location[0] - cluster[-1][1] < distance:
+            if (location[0] - cluster[-1][1] < distance) and (len(cluster) < MAX_ITEMS_PER_GROUP):
                 cluster.append(location);
             else:
                 yield cluster;
@@ -473,11 +487,49 @@ def clusterLocations(locations, distance=PileupDataTools.MIN_DISTANCE, maxAllele
         cluster = [];
 
 
+def split_clusters(cluster, reference):
+    """
+    Split clusters (again) so that the number of items in the cluster is less than MAX items
+
+    :param cluster: list
+        List of cluster tuples
+
+    :param reference: PySamFastaWrapper
+        Reference object
+
+    :return: tuple
+        List of clusters and reference segments
+    """
+    cluster = list(cluster)
+
+    if len(cluster) <= MAX_ITEMS_PER_GROUP:
+        ref_start = cluster[0][0] - PileupDataTools.MIN_DISTANCE // 2
+        ref_stop = cluster[-1][-1] + PileupDataTools.MIN_DISTANCE // 2
+        yield cluster, ''.join(reference[ref_start: ref_stop]), ref_start
+    else:
+        last_cluster = None
+        indices = list(range(0, len(cluster), MAX_ITEMS_PER_GROUP))
+
+        for i in range(len(indices)):
+            index = indices[i]
+            next_index = indices[i + 1] if i + 1 < len(indices) else -1
+            current_cluster = cluster[index: index + MAX_ITEMS_PER_GROUP]
+            next_cluster = cluster[next_index: next_index + MAX_ITEMS_PER_GROUP] if next_index >= 0 else None
+            ref_start = max(
+                current_cluster[0][0] - PileupDataTools.MIN_DISTANCE // 2,
+                last_cluster[-1][-1] if last_cluster else -float('inf')
+            )
+            ref_stop = min(
+                current_cluster[-1][-1] + PileupDataTools.MIN_DISTANCE // 2,
+                next_cluster[0][0] if next_cluster else float('inf')
+            )
+            yield current_cluster, ''.join(reference[ref_start: ref_stop]), ref_start
+            last_cluster = current_cluster
+
+
 def get_labeled_candidates(
     chromosome,
-    start,
-    stop,
-    segment,
+    reference,
     searcher,
     cluster,
     truths=None,
@@ -491,11 +543,8 @@ def get_labeled_candidates(
     :param chromosome: str
         Chromosome
 
-    :param start: int
-        Start position of region
-
-    :param stop: int
-        Stop position of region
+    :param reference: PySamFastaWrapper
+        Reference object
 
     :param searcher: AlleleSearcherLite
         AlleleSearcher object
@@ -524,108 +573,118 @@ def get_labeled_candidates(
     searcher.assemble_region()
     cluster = searcher.cluster
 
-    for spot in cluster:
-        allelesAtSpot = [];
-        allelesAtSpotForTruthing = [];
-        refAllele = segment[spot[0] - start: spot[1] - start];
-
-        if highconf is not None:
-            if not checkIntersection(spot, highconf[chromosome]):
-                continue;
-
-        candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
-        allelesAtSpot += candidates;
-        allelesAtSpot = list(set(allelesAtSpot));
-
-        candidateRecords.append(
-            createRecord(
-                chromosome=chromosome, position=spot[0], refAllele=refAllele, allelesAtSite=allelesAtSpot,
-            )
-        );
-
-    candidateRecords = sorted(candidateRecords, key=lambda x: x.position);
-
-    if truths is not None:
-        assert(highconf is not None), "Provide highconf bed if truth is provided";
-
-        # To determine ground-truths actually perform assembly for searcher0 and create candidates
-        # We perform assembly in order to use only alleles that have non-zero support, rather than
-        # alleles that have no support. Sometimes it is possible that labels are created with alleles
-        # with no support (especially in STR regions).
-        candidateRecordsForTruthing = [];
-        # searcher = searchers[0];
+    results = []
+    
+    for cluster, segment, start in split_clusters(cluster, reference):
+        stop = start + len(segment)
 
         for spot in cluster:
-            if not checkIntersection(spot, highconf[chromosome]):
-                continue;
-
-            searcher.assemble(spot[0], spot[1]);
+            allelesAtSpot = [];
+            allelesAtSpotForTruthing = [];
             refAllele = segment[spot[0] - start: spot[1] - start];
 
-            # Only obtain allele list that has support from one sequencing technology
-            allelesToTruthFrom = [];
-
-            for allele in searcher.allelesAtSite:
-                if searcher.hybrid:
-                    if searcher.numReadsSupportingAlleleStrict(allele, 0) > 0:
-                        allelesToTruthFrom.append(allele);
-                else:
-                    allelesToTruthFrom.append(allele);
-
-            candidateRecordsForTruthing.append(
-                createRecord(
-                    chromosome=chromosome,
-                    position=spot[0],
-                    refAllele=refAllele,
-                    allelesAtSite=list(set(allelesToTruthFrom))
-                )
-            );
-
-        # Note: It seems ground-truth vcf has records outside of high-confidence regions
-        groundTruth = [
-            item.data for item in truths[chromosome][start: stop] \
-                    if checkIntersectionRecord(item.data, highconf[chromosome])
-        ];
-        sortedTruths = sorted(groundTruth, key=lambda x: x.position);
-
-        try:
             logging.debug(
-                "Calculating truths %s, %s, %s, %d" % (
-                    str(candidateRecordsForTruthing), str(sortedTruths), segment, start
+                "Collecting reference allele for locations %d -> %d with segment start %d, end %d" % (
+                    spot[0], spot[1], start, start + len(segment)
+                )
+            )
+
+            if highconf is not None:
+                if not checkIntersection(spot, highconf[chromosome]):
+                    continue;
+
+            candidates = searcher.determineAllelesInRegion(spot[0], spot[1]);
+            allelesAtSpot += candidates;
+            allelesAtSpot = list(set(allelesAtSpot));
+
+            candidateRecords.append(
+                createRecord(
+                    chromosome=chromosome, position=spot[0], refAllele=refAllele, allelesAtSite=allelesAtSpot,
                 )
             );
-            flag, truthAlleles = AnnotateRegions.labelSites(
-                segment,
-                candidateRecordsForTruthing,
-                sortedTruths,
-                left=start,
-            );
-            logging.debug("Truths = %s" % (str(truthAlleles)));
-        except ValueError:
-            logging.info("Region %s: %d - %d is too long" % (chromosome, start, stop));
-            INTERNAL_TIME0 += (timer() - execStart);
-            return None;
 
-        if not flag:
-            candidateRecords = [
-                editRecord(r, {'gt': [-1, -1]}) for r in candidateRecords
-            ];
-        else:
-            # Mark the ground-truth alleles in each record
-            substituteRecords = [];
+        candidateRecords = sorted(candidateRecords, key=lambda x: x.position);
 
-            for r, t in zip(candidateRecords, truthAlleles):
-                gt = [findAlleleIndex(r, _) for _ in t];
-                assert(len(gt) >= 1), "At least one ground-truth allele should be found";
-                gt = gt * 2 if len(gt) == 1 else gt;
-                substituteRecords.append(
-                    editRecord(r, {'gt': gt})
+        if truths is not None:
+            assert(highconf is not None), "Provide highconf bed if truth is provided";
+
+            # To determine ground-truths actually perform assembly for searcher0 and create candidates
+            # We perform assembly in order to use only alleles that have non-zero support, rather than
+            # alleles that have no support. Sometimes it is possible that labels are created with alleles
+            # with no support (especially in STR regions).
+            candidateRecordsForTruthing = [];
+            # searcher = searchers[0];
+
+            for spot in cluster:
+                if not checkIntersection(spot, highconf[chromosome]):
+                    continue;
+
+                logging.debug("Performing assembly in %d -> %d" % (spot[0], spot[1]))
+                searcher.assemble(spot[0], spot[1]);
+                logging.debug("Completed assembly in %d -> %d" % (spot[0], spot[1]))
+                refAllele = segment[spot[0] - start: spot[1] - start];
+
+                # Only obtain allele list that has support from one sequencing technology
+                allelesToTruthFrom = [];
+
+                for allele in searcher.allelesAtSite:
+                    if searcher.hybrid:
+                        if searcher.numReadsSupportingAlleleStrict(allele, 0) > 0:
+                            allelesToTruthFrom.append(allele);
+                    else:
+                        allelesToTruthFrom.append(allele);
+
+                candidateRecordsForTruthing.append(
+                    createRecord(
+                        chromosome=chromosome,
+                        position=spot[0],
+                        refAllele=refAllele,
+                        allelesAtSite=list(set(allelesToTruthFrom))
+                    )
                 );
 
-            candidateRecords = substituteRecords;
+            # Note: It seems ground-truth vcf has records outside of high-confidence regions
+            groundTruth = [
+                item.data for item in truths[chromosome][start: stop] \
+                        if checkIntersectionRecord(item.data, highconf[chromosome])
+            ];
+            sortedTruths = sorted(groundTruth, key=lambda x: x.position);
+
+            try:
+                logging.debug("Candidate records %s" % str(candidateRecordsForTruthing))
+                logging.debug("Ground truth records %s" % str(sortedTruths))
+                logging.debug("Reference segment %s at %d" % (segment, start))
+                lmachine = labeler.Labeler(sortedTruths, segment, start)
+                flag, truthAlleles = lmachine(candidateRecordsForTruthing)
+                logging.debug("Truths = %s" % (str(truthAlleles)));
+            except RegionTooLongException:
+            # except ValueError:
+                logging.info("Region %s: %d - %d is too long" % (chromosome, start, stop));
+                INTERNAL_TIME0 += (timer() - execStart);
+                return None;
+
+            if not flag:
+                candidateRecords = [
+                    editRecord(r, {'gt': [-1, -1]}) for r in candidateRecords
+                ];
+            else:
+                # Mark the ground-truth alleles in each record
+                substituteRecords = [];
+
+                for r, t in zip(candidateRecords, truthAlleles):
+                    gt = [findAlleleIndex(r, _) for _ in t];
+                    assert(len(gt) >= 1), "At least one ground-truth allele should be found";
+                    gt = gt * 2 if len(gt) == 1 else gt;
+                    substituteRecords.append(
+                        editRecord(r, {'gt': gt})
+                    );
+
+                candidateRecords = substituteRecords;
+
+        results.extend(candidateRecords)
 
     INTERNAL_TIME0 += (timer() - execStart);
-    return candidateRecords;
+    return results
 
 
 @profile
@@ -803,6 +862,8 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
     execStart = timer();
     global TENSOR_TIME;
 
+    logging.debug("Starting tensor retrieval")
+
     def allelesInRecord(record):
         alleles_ = [record.ref] + record.alt;
         return set(alleles_[gt] for gt in record.gt);
@@ -811,7 +872,9 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
         start_ = record.position;
         stop_ = start_ + len(record.ref);
 
+        logging.debug("Performing assembly in %d -> %d for tensor retrieval" % (start_, stop_))
         searcher.assemble(start_, stop_);
+        logging.debug("Completed assembly in %d -> %d for tensor retrieval" % (start_, stop_))
 
         tensors = [];
         labels = [];
@@ -854,9 +917,10 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
                 supportingReads2.append(-1);
                 supportingReadsStrict2.append(searcher.numReadsSupportingAlleleStrict(allele, 1));
 
+            
         siteLabel = 0 if sum(labels) <= 1 else 1;
-        total = sum(labels);
-        labels = [i / total for i in labels];
+        # total = sum(labels);
+        # labels = [i / total for i in labels];
 
         TENSOR_TIME += (timer() - execStart);
         yield {
@@ -875,6 +939,8 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
             'supportingReadsStrict2': supportingReadsStrict2,
         };
         execStart = timer();
+
+    logging.debug("Completed tensor retrieval")
 
 
 def data(
@@ -968,9 +1034,7 @@ def data(
             # candidates = getLabeledCandidates(
             candidates = get_labeled_candidates(
                 chromosome,
-                start,
-                stop,
-                ''.join(ref[start: stop]),
+                ref,
                 searcher,
                 cluster,
                 truthSet,
@@ -1000,5 +1064,6 @@ def data(
             # Generate tensors
             for tensors in createTensors(candidates, searcher, maxAlleleLength, hotspotMethod=hotspotMethod):
                 DATAGEN_TIME += (timer() - execStart);
+                logging.debug("Yielding")
                 yield tensors;
                 execStart = timer();

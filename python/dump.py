@@ -5,8 +5,45 @@ import random
 import warnings
 import logging
 import glob
+import pybedtools
+import PySamFastaWrapper
 
 CHROMOSOMES = [str(i) for i in range(1, 21)]
+
+
+def intersect(bed, truth, chromosome, prefix):
+    """
+    Perform bed intersection at chromosome level
+
+    :param bed: str
+        Bed file path
+
+    :param truth: str
+        Truth vcf path
+
+    :param chromosome: str
+        Chromosome
+
+    :param prefix: str
+        Prefix of the output file
+
+    :return: tuple
+        (chromosomal bed, chromosomal vcf)
+    """
+    logging.info("Preparing chromosomal bed and vcf files for chromosome %s" % chromosome)
+    reference = PySamFastaWrapper.PySamFastaWrapper(args.ref, chrom=chromosome)
+    bed_name = prefix + ".bed"
+    vcf_name = prefix + ".vcf"
+
+    vcf_bed = pybedtools.BedTool(truth)
+    hc_bed = pybedtools.BedTool(bed)
+
+    subset_op = pybedtools.BedTool("\t".join([chromosome, "0", "%d" % len(reference)]), from_string=True)
+    vcf_bed.intersect(subset_op, header=True).saveas(vcf_name)
+    hc_bed.intersect(subset_op).saveas(bed_name)
+    logging.info("Completed preparing necessary ground-truth data")
+
+    return (bed_name, vcf_name)
 
 
 def main_single(bams, pacbio):
@@ -71,20 +108,28 @@ def main_single(bams, pacbio):
             shards = glob.glob("%s*.txt" % shard_name)
             caller_command_filename = os.path.join(output_dir, "caller_commands.sh")
 
+            chrom_bed, chrom_vcf = intersect(
+                args.bed,
+                args.truth,
+                chrom,
+                prefix=os.path.join(output_dir, "chromosome%s_ground_truth" % chrom)
+            )
+
             with open(caller_command_filename, "w") as fhandle:
                 for shard in shards:
                     command_string = "python %s" % caller_command
                     command_string += " --activity %s" % shard
                     command_string += " --bam %s" % bam
                     command_string += " --ref %s" % args.ref
-                    command_string += " --truth %s" % args.truth
-                    command_string += " --highconf %s" % args.bed
+                    command_string += " --truth %s" % chrom_vcf
+                    command_string += " --highconf %s" % chrom_bed
                     command_string += " --featureLength %d" % 150
                     command_string += " --intersect"
                     command_string += " --reuse"
                     command_string += " --simple"
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
                     command_string += " --pacbio" if pacbio else ""
+                    command_string += " --test_labeling" if args.test_labeling else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -187,13 +232,15 @@ def main(ibams, pbams, random_combine=False):
 
             logging.info("Completed sharding, creating caller commands for dumping training data")
 
-            # python /root/storage/subsampled/Illumina/30x/training/hello/python/caller.py --activity /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt
-            # --bam /root/storage/subsampled/Illumina/30x/HG001.hs37d5.30x.RG.realigned.bam,/root/storage/subsampled/PacBio/30x/HG001.SequelII.pbmm2.hs37d5.whatshap.haplotag.RTG.trio.bam
-            # --ref /root/storage/data/hs37d5.fa --truth /root/storage/subsampled/3.3.2/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf
-            # --highconf /root/storage/subsampled/3.3.2/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_nosomaticdel.bed --featureLength 250 --intersect --reuse --simple
-            # --outputPrefix /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt_data >& /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt_log.log
             shards = glob.glob("%s*.txt" % shard_name)
             caller_command_filename = os.path.join(output_dir, "caller_commands.sh")
+
+            chrom_bed, chrom_vcf = intersect(
+                args.bed,
+                args.truth,
+                chrom,
+                prefix=os.path.join(output_dir, "chromosome%s_ground_truth" % chrom)
+            )
 
             with open(caller_command_filename, "w") as fhandle:
                 for shard in shards:
@@ -201,13 +248,14 @@ def main(ibams, pbams, random_combine=False):
                     command_string += " --activity %s" % shard
                     command_string += " --bam %s,%s" % (ib, pbam_selected)
                     command_string += " --ref %s" % args.ref
-                    command_string += " --truth %s" % args.truth
-                    command_string += " --highconf %s" % args.bed
+                    command_string += " --truth %s" % chrom_vcf
+                    command_string += " --highconf %s" % chrom_bed
                     command_string += " --featureLength %d" % 150
                     command_string += " --intersect"
                     command_string += " --reuse"
                     command_string += " --simple"
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
+                    command_string += " --test_labeling" if args.test_labeling else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -298,6 +346,13 @@ if __name__ == "__main__":
         "--chromosomes",
         help="Chromosomes to use (comma-separated)",
         required=False,
+    )
+
+    parser.add_argument(
+        "--test_labeling",
+        help="Use runs for testing labeling",
+        default=False,
+        action="store_true",
     )
 
     args = parser.parse_args()

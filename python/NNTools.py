@@ -598,15 +598,20 @@ class Network(torch.nn.Module):
         layers = []
 
         for i, configuration in enumerate(config):
-            layerType = getattr(torch.nn, configuration['type'])
+            try:
+                layerType = getattr(torch.nn, configuration['type'])
+            except Exception:
+                logging.error("Failed reading configuration " + str(configuration))
+                raise ValueError
+
             layer = layerType(**configuration['kwargs'])
             initCNN(layer)
             layers.append(layer)
 
         self.network = torch.nn.Sequential(*layers)
 
-    def forward(self, tensors, *args, **kwargs):
-        return self.network(tensors)
+    def forward(self, *args, **kwargs):
+        return self.network(*args, **kwargs)
 
 
 class Pad1d(torch.nn.Module):
@@ -659,8 +664,39 @@ class Compressor(torch.nn.Module):
 
     def forward(self, tensor):
         res = tensor
-        res = torch.mean(self.layers(res), dim=-1)
+        return self.layers(res)
+
+
+class DotProduct(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensors):
+        tensora, tensorb = tensors
+        res = torch.matmul(
+            tensora.view(tensora.shape[0], 1, tensora.shape[1]),
+            tensorb.view(tensorb.shape[0], tensorb.shape[1], 1)
+        ) / (tensora.shape[1] ** 0.5)
+        res = torch.squeeze(res, dim=2)
         return res
+
+
+class ConcatenateChannels(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensors):
+        res = torch.cat(tensors, dim=1)
+        return res
+
+
+class AdditiveLayer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensors):
+        tensora, tensorb = tensors
+        return tensora + tensorb
 
 
 torch.nn.Compressor = Compressor
@@ -669,3 +705,5 @@ torch.nn.GlobalPool = GlobalPool
 torch.nn.ResidualBlock = ResidualBlock
 torch.nn.Noop = Noop
 torch.nn.Inception = Inception
+torch.nn.DotProduct = DotProduct
+torch.nn.ConcatenateChannels = ConcatenateChannels

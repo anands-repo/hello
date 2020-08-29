@@ -151,9 +151,13 @@ void AlleleSearcherLiteFiltered::updateAlleleCounts()
         ) {
             pair<string, string> allele(refAllele, altAllele);
 
+            bool n_in_alleles = ((refAllele.find("N") != string::npos) || (altAllele.find("N") != string::npos));
+
             if (
-                (rdcounter < 0) || 
-                (*min_element(quality.begin() + rdcounter, quality.begin() + rdcounter + rdlength) >= threshold)
+                ((rdcounter < 0) || 
+                (*min_element(quality.begin() + rdcounter, quality.begin() + rdcounter + rdlength) >= threshold)) && (
+                    !n_in_alleles
+                )
             ) {
                 auto& altCounts = partial ? 
                     (leftPartial ? count.leftPartialAltCounts : count.rightPartialAltCounts) : count.altCounts;
@@ -851,22 +855,23 @@ void AlleleSearcherLiteFiltered::determine_differing_regions_helper(
                 // Only use alleles of small size
                 if (max(refBase.size(), altBase.size()) > this->maxAlleleSize) continue;
 
-                DEBUG << "Position = " << item.pos << ", altcount, total = " << value << ", " << item.total;
+                DEBUG << "Position = " << item.pos << ", refBase " << refBase << ", altBase " << altBase << ", count " << value << ", min_threshold " << min_count_indel << ", total " << item.total << ", fraction " << this->indelThreshold;
 
                 if ((value / item.total >= this->indelThreshold) && (value >= min_count_indel)) {
-                    DEBUG << "yes";
-
                     // Add all bases from the left-flanking base to the right
                     // flanking base of the indel
                     long start = item.pos;
                     long stop = start + refBase.size() + 1;
 
+                    DEBUG << endl;
+                    DEBUG << "Found ref base " << refBase << ", alt base "  << altBase;
+                    DEBUG << "Position = " << item.pos << ", altcount, total = " << value << ", " << item.total;
+                    DEBUG << "Differing locations " <<  start << "-> " << stop;
+                    DEBUG << endl;
+
                     for (long i = start; i < stop; i ++) {
                         differingLocations.insert(i);
-                        DEBUG << "here";
                     }
-                } else {
-                    DEBUG << "no";
                 }
             }
         }
@@ -905,6 +910,7 @@ void AlleleSearcherLiteFiltered::clearAllelesForAssembly()
 void AlleleSearcherLiteFiltered::assemble(size_t start_, size_t stop_)
 {
     this->supports.clear();
+    this->allelesAtSite.clear();
 
     pair<long, long> site(start_, stop_);
 

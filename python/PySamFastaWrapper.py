@@ -4,7 +4,7 @@ import pysam
 class PySamFastaWrapper:
     def __init__(self, database, chrom=None):
         self.fasta = database;
-        self.chrom = None;
+        self.chrom = chrom;
         self.handle = pysam.FastaFile(database);
 
     def __len__(self):
