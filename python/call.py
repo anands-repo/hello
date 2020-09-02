@@ -106,7 +106,6 @@ def main(ibam, pbam):
             command_string += " --ref %s" % args.ref
             command_string += " --network %s" % args.network
             command_string += " --featureLength %d" % 150
-            command_string += " --reuse"
             command_string += " --simple"
             command_string += " --provideFeatures"
             command_string += " --outputPrefix %s" % output_prefix
@@ -242,7 +241,6 @@ def main_single(bam, pacbio):
             command_string += " --ref %s" % args.ref
             command_string += " --network %s" % args.network
             command_string += " --featureLength %d" % 150
-            command_string += " --reuse"
             command_string += " --simple"
             command_string += " --provideFeatures"
             command_string += " --outputPrefix %s" % output_prefix

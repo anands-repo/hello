@@ -1,6 +1,7 @@
 import torch
 import logging
 import math
+import Attention
 
 
 def initCNN(layer):
@@ -21,10 +22,15 @@ def SingleLinearLayer(
     batch_norm=True,
     activation="ReLU",
     activation_args=dict(),
+    use_weight_norm=False,
+    norm_type="BatchNorm1d",
 ):
+    if use_weight_norm:
+        batch_norm = False
+
     config = [
         {
-            "type": "Linear",
+            "type": "Linear" if not use_weight_norm else "WeightNormedLinear",
             "kwargs": {
                 "in_features": in_features,
                 "out_features": out_features,
@@ -35,7 +41,7 @@ def SingleLinearLayer(
     if batch_norm:
         config.append(
             {
-                "type": "BatchNorm1d",
+                "type": norm_type,
                 "kwargs": {
                     "num_features": out_features,
                 }
@@ -73,9 +79,14 @@ def SingleConvLayer(
     activation="ReLU",
     activation_args=dict(),
     no_batch_norm=False,
+    use_weight_norm=False,
+    norm_type="BatchNorm1d",
 ):
+    if use_weight_norm:
+        no_batch_norm = True
+
     convBlock = [{
-        "type": "Conv1d",
+        "type": "Conv1d" if not use_weight_norm else "WeightNormedConv1d",
         "kwargs": {
             "in_channels": inChannels,
             "out_channels": outChannels,
@@ -89,7 +100,7 @@ def SingleConvLayer(
 
     if not no_batch_norm:
         convBlock += [{
-            "type": "BatchNorm1d",
+            "type": norm_type,
             "kwargs": {
                 "num_features": outChannels,
             }
@@ -111,13 +122,17 @@ def ResidualBlockConvShortcut(
     dilations,
     strides,
     groups=[1, 1, 1],
+    use_weight_norm=False,
+    norm_type="BatchNorm1d",
+    activation="ReLU",
+    activation_args=dict(),
 ):
     residualBlock = {
         "type": "ResidualBlock",
         "kwargs": {
             "feedforward": [
                 {
-                    "type": "Conv1d",
+                    "type": "Conv1d" if not use_weight_norm else "WeightNormedConv1d",
                     "kwargs": {
                         "in_channels": inChannels,
                         "out_channels": outChannels,
@@ -130,19 +145,22 @@ def ResidualBlockConvShortcut(
                 },
 
                 {
-                    "type": "BatchNorm1d",
+                    "type": norm_type,
                     "kwargs": {
                         "num_features": outChannels,
                     }
+                } if not use_weight_norm else {
+                    "type": "Noop",
+                    "kwargs": dict()
                 },
 
                 {
-                    "type": "ReLU",
-                    "kwargs": dict(),
+                    "type": activation,
+                    "kwargs": activation_args,
                 },
 
                 {
-                    "type": "Conv1d",
+                    "type": "Conv1d" if not use_weight_norm else "WeightNormedConv1d",
                     "kwargs": {
                         "in_channels": outChannels,
                         "out_channels": outChannels,
@@ -155,21 +173,24 @@ def ResidualBlockConvShortcut(
                 },
 
                 {
-                    "type": "BatchNorm1d",
+                    "type": norm_type,
                     "kwargs": {
                         "num_features": outChannels,
                     }
+                } if not use_weight_norm else {
+                    "type": "Noop",
+                    "kwargs": dict(),
                 },
 
                 {
-                    "type": "ReLU",
-                    "kwargs": dict(),
+                    "type": activation,
+                    "kwargs": activation_args,
                 },
             ],
 
             "shortcut": [
                 {
-                    "type": "Conv1d",
+                    "type": "Conv1d" if not use_weight_norm else "WeightNormedConv1d",
                     "kwargs": {
                         "in_channels": inChannels,
                         "out_channels": outChannels,
@@ -193,13 +214,17 @@ def ResidualBlockFTShortcut(
     dilations,
     strides,
     groups=[1, 1],
+    use_weight_norm=False,
+    norm_type="BatchNorm1d",
+    activation="ReLU",
+    activation_args=dict(),
 ):
     residualBlock = {
         "type": "ResidualBlock",
         "kwargs": {
             "feedforward": [
                 {
-                    "type": "Conv1d",
+                    "type": "Conv1d" if not use_weight_norm else "WeightNormedConv1d",
                     "kwargs": {
                         "in_channels": inChannels,
                         "out_channels": outChannels,
@@ -212,19 +237,22 @@ def ResidualBlockFTShortcut(
                 },
 
                 {
-                    "type": "BatchNorm1d",
+                    "type": norm_type,
                     "kwargs": {
                         "num_features": outChannels,
                     }
-                },
-
-                {
-                    "type": "ReLU",
+                } if not use_weight_norm else {
+                    "type": "Noop",
                     "kwargs": dict(),
                 },
 
                 {
-                    "type": "Conv1d",
+                    "type": activation,
+                    "kwargs": activation_args,
+                },
+
+                {
+                    "type": "Conv1d" if not use_weight_norm else "WeightNormedConv1d",
                     "kwargs": {
                         "in_channels": outChannels,
                         "out_channels": outChannels,
@@ -237,15 +265,18 @@ def ResidualBlockFTShortcut(
                 },
 
                 {
-                    "type": "BatchNorm1d",
+                    "type": norm_type,
                     "kwargs": {
                         "num_features": outChannels,
                     }
+                } if not use_weight_norm else {
+                    "type": "Noop",
+                    "kwargs": dict(),
                 },
 
                 {
-                    "type": "ReLU",
-                    "kwargs": dict(),
+                    "type": activation,
+                    "kwargs": activation_args,
                 },
             ],
 
@@ -482,7 +513,13 @@ def inceptionBlockB(
     return inceptionBlock
 
 
-def terminus(inChannels, outChannels, dropout=0):
+def terminus(
+    inChannels,
+    outChannels,
+    dropout=0,
+    use_weight_norm=False,
+    norm_type="BatchNorm1d"
+):
     config = [
         {
             "type": "AdaptiveAvgPool1d",
@@ -500,21 +537,24 @@ def terminus(inChannels, outChannels, dropout=0):
         # otherwise use dropout. Using them both is not
         # good for training
         {
-            "type": "BatchNorm1d",
+            "type": norm_type,
             "kwargs": {
                 "num_features": inChannels,
             }
         } 
-        if dropout == 0 else
+        if (dropout == 0) and (not use_weight_norm) else
         {
             "type": "Dropout",
             "kwargs": {
                 "p": dropout
             }
+        } if (dropout > 0) else {
+            "type": "Noop",
+            "kwargs": dict(),
         },
 
         {
-            "type": "Linear",
+            "type": "Linear" if not use_weight_norm else "WeightNormedLinear",
             "kwargs": {
                 "in_features": inChannels,
                 "out_features": outChannels,
@@ -546,7 +586,7 @@ class Noop(torch.nn.Module):
     """
     Noop layer does no operation; for shortcut connections
     """
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__()
 
     def forward(self, tensor):
@@ -605,7 +645,9 @@ class Network(torch.nn.Module):
                 raise ValueError
 
             layer = layerType(**configuration['kwargs'])
-            initCNN(layer)
+            # Commented: September 1 2020. pytorch does
+            # automatic initialization of weights
+            # initCNN(layer)
             layers.append(layer)
 
         self.network = torch.nn.Sequential(*layers)
@@ -699,6 +741,92 @@ class AdditiveLayer(torch.nn.Module):
         return tensora + tensorb
 
 
+class SelectArgument(torch.nn.Module):
+    def __init__(self, select):
+        super().__init__()
+        self.select = select
+
+    def forward(self, args):
+        return args[self.select]
+
+
+class Fork(torch.nn.Module):
+    def __init__(self, net_args):
+        super().__init__()
+        for i, args in enumerate(net_args):
+            setattr(self, 'net%d' % i, Network(args))
+
+    def forward(self, args):
+        return [
+            getattr(self, 'net%d' % i)(args[i]) for i in range(len(args))
+        ]
+
+
+class LinearCombination(torch.nn.Module):
+    def __init__(self, coefficients):
+        super().__init__()
+        self.coefficients = coefficients
+
+    def forward(self, args):
+        result = 0
+
+        for i, a in enumerate(args):
+            result += self.coefficients[i] * a
+
+        return result
+
+
+class WeightNormedLinear(torch.nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.linear = torch.nn.utils.weight_norm(
+            torch.nn.Linear(*args, **kwargs)
+        )
+
+    def forward(self, *args, **kwargs):
+        return self.linear(*args, **kwargs)
+
+
+class WeightNormedConv1d(torch.nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.conv1d = torch.nn.utils.weight_norm(
+            torch.nn.Conv1d(*args, **kwargs)
+        )
+
+    def forward(self, *args, **kwargs):
+        return self.conv1d(*args, **kwargs)
+
+
+class LayerNormModule(torch.nn.Module):
+    """
+    Layer norm cannot be applied to conv by default as the original paper says, but
+    we treat the conv outputs similar to recurrent activations occurring one after the
+    other in order as a result of processing a state (which are the layer inputs)
+    """
+    def __init__(self, num_features):
+        super().__init__()
+        self.normer = torch.nn.LayerNorm(normalized_shape=num_features)
+
+    def forward(self, tensor):
+        """
+        :param tensor: torch.Tensor
+            Shape: [batch, #channels, length]
+        """
+        if len(tensor.shape) == 3:
+            # For convolutional layers
+            transposed = torch.transpose(tensor, 1, 2)  # [b, l, c]
+            normed = self.normer(transposed)
+            result = torch.transpose(normed, 1, 2)  # [b, c, l]
+        elif len(tensor.shape) == 2:
+            # For linear layers
+            result = self.normer(tensor)
+        else:
+            raise ValueError("Unknown tensor shape")
+
+        return result
+
+
 torch.nn.Compressor = Compressor
 torch.nn.Flatten = Flatten
 torch.nn.GlobalPool = GlobalPool
@@ -707,3 +835,9 @@ torch.nn.Noop = Noop
 torch.nn.Inception = Inception
 torch.nn.DotProduct = DotProduct
 torch.nn.ConcatenateChannels = ConcatenateChannels
+torch.nn.SelectArgument = SelectArgument
+torch.nn.Fork = Fork
+torch.nn.LinearCombination = LinearCombination
+torch.nn.WeightNormedConv1d = WeightNormedConv1d
+torch.nn.WeightNormedLinear = WeightNormedLinear
+torch.nn.LayerNormModule = LayerNormModule

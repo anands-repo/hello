@@ -211,17 +211,17 @@ def createVcfRecord(
                 else:
                     leftParsimonious = True;
 
-        entry = "%s\t%d\t.\t%s\t%s\t%f\t%s\t%s\tGT\t%s"%(
-            str(chromosome),
-            location + 1,
-            ref,
-            ','.join(alt),
-            qual,
-            qualifier,  # 'PASS'
-            string,
-            '/'.join([str(x) for x in gt]),
-        );
-        records.append(entry);
+            entry = "%s\t%d\t.\t%s\t%s\t%f\t%s\t%s\tGT\t%s"%(
+                str(chromosome),
+                location + 1,
+                ref,
+                ','.join(alt),
+                qual,
+                qualifier,  # 'PASS'
+                string,
+                '/'.join([str(x) for x in gt]),
+            );
+            records.append(entry);
 
     return records;
 

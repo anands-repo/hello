@@ -125,7 +125,6 @@ def main_single(bams, pacbio):
                     command_string += " --highconf %s" % chrom_bed
                     command_string += " --featureLength %d" % 150
                     command_string += " --intersect"
-                    command_string += " --reuse"
                     command_string += " --simple"
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
                     command_string += " --pacbio" if pacbio else ""
@@ -252,7 +251,6 @@ def main(ibams, pbams, random_combine=False):
                     command_string += " --highconf %s" % chrom_bed
                     command_string += " --featureLength %d" % 150
                     command_string += " --intersect"
-                    command_string += " --reuse"
                     command_string += " --simple"
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
                     command_string += " --test_labeling" if args.test_labeling else ""

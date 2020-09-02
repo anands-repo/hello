@@ -574,6 +574,10 @@ def get_labeled_candidates(
     cluster = searcher.cluster
 
     results = []
+
+    # It's possible that post-assembly the clusters are not viable any more
+    if len(cluster) == 0:
+        return results
     
     for cluster, segment, start in split_clusters(cluster, reference):
         stop = start + len(segment)

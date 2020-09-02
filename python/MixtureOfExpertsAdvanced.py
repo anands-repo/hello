@@ -123,23 +123,31 @@ class MoEAttention(torch.nn.Module):
         if reduced_frames_for_allele.is_cuda:
             num_alleles_per_site_tensor = num_alleles_per_site_tensor.cuda(device=reduced_frames_for_allele.get_device())
 
-        # Prepare per-site compressed features and expand them to allele-level
+        # Prepare per-site compressed features from read-level features
         reduced_frames_for_site = reduceSlots(
             reduced_frames_for_allele, num_alleles_per_site_tensor
         )
-        compressed_features_site = compressor(reduced_frames_for_site)
-        expanded_frames_for_site = torch.repeat_interleave(
-            compressed_features_site, num_alleles_per_site_tensor, dim=0
+        compressed_features_site0 = compressor(reduced_frames_for_site)
+        expanded_frames_for_site0 = torch.repeat_interleave(
+            compressed_features_site0, num_alleles_per_site_tensor, dim=0
+        )
+
+        # Prepare per-site compressed features from allele-level compressed features
+        compressed_features_site1 = reduceSlots(
+            compressed_features_allele, num_alleles_per_site_tensor
+        )
+        expanded_frames_for_site1 = torch.repeat_interleave(
+            compressed_features_site1, num_alleles_per_site_tensor, dim=0
         )
 
         # Attention computation for prediction
         attn_network = getattr(self, 'xattn%d' % compressor_index)
 
         expert_predictions = attn_network(
-            (compressed_features_allele, expanded_frames_for_site)
+            (compressed_features_allele, (expanded_frames_for_site0, expanded_frames_for_site1))
         )
 
-        return expert_predictions, compressed_features_site
+        return expert_predictions, (compressed_features_site0, compressed_features_site1)
 
     def expert_predictions(self, read_conv, numAllelesPerSite, numReadsPerAllele, compressor_index):
         reduced_frames_for_allele = reduceSlots(read_conv, numReadsPerAllele)
@@ -461,7 +469,6 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
 
         if hybrid:
             experts, meta = results
-            print(meta)
             meta = meta[0];  # Remove unnecessary batch dimension
             experts = [torch.squeeze(torch.sigmoid(e), dim=1) for e in experts]
         else:
@@ -522,30 +529,49 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
             return getPredictionDictionary()[0]
 
 
-def make_network(configDict, name, module_to_use=NNTools.Network):
-    if name in configDict and configDict[name]:
-        configuration = importlib.import_module(configDict[name]).config
+def make_network(configDict, name, module_to_use=NNTools.Network, use_weight_norm=False):
+    if name in configDict and (configDict[name] is not None):
+        if type(configDict[name]) is str:
+            module = importlib.import_module(configDict[name])
+
+            # Regenerate config with batch-normalization if necessary
+            if hasattr(module, 'weight_norm') and use_weight_norm:
+                module.weight_norm = True
+                module.gen_config()
+                logging.info("Enabling weight-normalization for layer")
+
+            configuration = module.config
+        elif type(configDict[name]) is list:
+            configuration = configDict[name]
+        else:
+            raise AttributeError("configurations should point to a module or should be a list")
+
         return module_to_use(configuration)
     else:
         return None
 
 
 def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
-    ngsConvolver = make_network(configDict, "readConvNGS")  # NNTools.Network(importlib.import_module(configDict['readConv']).config)
-    tgsConvolver = make_network(configDict, "readConvTGS")  # NNTools.Network(importlib.import_module(configDict['readConv']).config)
-    meta = make_network(configDict, "meta")  # NNTools.Network(importlib.import_module(configDict['meta']).config)
+    use_weight_norm = 'weight_norm' in configDict and configDict['weight_norm']
 
-    alleleConvNgs = make_network(configDict, "alleleConvSingleNGS")  # NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
-    alleleConvTgs = make_network(configDict, "alleleConvSingleTGS")  # NNTools.Network(importlib.import_module(configDict['alleleConvSingle']).config)
-    graphConvNgs = make_network(configDict, "graphConvSingleNGS")  # NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
-    graphConvTgs = make_network(configDict, "graphConvSingleTGS")  # NNTools.Network(importlib.import_module(configDict['graphConvSingle']).config)
+    if use_weight_norm:
+        logging.info("Using weight-normalization network-wide")
+
+    ngsConvolver = make_network(configDict, "readConvNGS", use_weight_norm=use_weight_norm)
+    tgsConvolver = make_network(configDict, "readConvTGS", use_weight_norm=use_weight_norm)
+    meta = make_network(configDict, "meta")
+
+    alleleConvNgs = make_network(configDict, "alleleConvSingleNGS", use_weight_norm=use_weight_norm)
+    alleleConvTgs = make_network(configDict, "alleleConvSingleTGS", use_weight_norm=use_weight_norm)
+    graphConvNgs = make_network(configDict, "graphConvSingleNGS", use_weight_norm=use_weight_norm)
+    graphConvTgs = make_network(configDict, "graphConvSingleTGS", use_weight_norm=use_weight_norm)
 
     # It is possible to avoid using graph convolver hybrid; in
     # this case, use a dummy module that always outputs a small value
-    graphConvHyb = make_network(configDict, "graphConvHybrid")  # importlib.import_module(configDict['graphConvHybrid']).config
+    graphConvHyb = make_network(configDict, "graphConvHybrid", use_weight_norm=use_weight_norm)
 
-    alleleConvCombiner = make_network(configDict, "alleleConvCombiner", module_to_use=ConvCombiner)
-    siteConvCombiner = make_network(configDict, "siteConvCombiner", module_to_use=ConvCombiner)
+    alleleConvCombiner = make_network(configDict, "alleleConvCombiner", module_to_use=ConvCombiner, use_weight_norm=use_weight_norm)
+    siteConvCombiner = make_network(configDict, "siteConvCombiner", module_to_use=ConvCombiner, use_weight_norm=use_weight_norm)
 
     if 'kwargs' in configDict:
         kwargs = configDict['kwargs']
@@ -569,19 +595,24 @@ def createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=False):
 
 
 def create_moe_attention_model(config_dict, *args, **kwargs):
-    read_convolver0 = make_network(config_dict, "read_conv0")
-    read_convolver1 = make_network(config_dict, "read_conv1")
+    use_weight_norm = 'weight_norm' in config_dict and config_dict['weight_norm']
 
-    compressor0 = make_network(config_dict, "compressor0")
-    compressor1 = make_network(config_dict, "compressor1")
-    compressor2 = make_network(config_dict, "compressor2")
+    if use_weight_norm:
+        logging.info("Using weight-normalization network-wide")
 
-    xattn0 = make_network(config_dict, "xattn0")
-    xattn1 = make_network(config_dict, "xattn1")
-    xattn2 = make_network(config_dict, "xattn2")
+    read_convolver0 = make_network(config_dict, "read_conv0", use_weight_norm=use_weight_norm)
+    read_convolver1 = make_network(config_dict, "read_conv1", use_weight_norm=use_weight_norm)
 
-    combiner = make_network(config_dict, "combiner")
-    meta = make_network(config_dict, "meta")
+    compressor0 = make_network(config_dict, "compressor0", use_weight_norm=use_weight_norm)
+    compressor1 = make_network(config_dict, "compressor1", use_weight_norm=use_weight_norm)
+    compressor2 = make_network(config_dict, "compressor2", use_weight_norm=use_weight_norm)
+
+    xattn0 = make_network(config_dict, "xattn0", use_weight_norm=use_weight_norm)
+    xattn1 = make_network(config_dict, "xattn1", use_weight_norm=use_weight_norm)
+    xattn2 = make_network(config_dict, "xattn2", use_weight_norm=use_weight_norm)
+
+    combiner = make_network(config_dict, "combiner", use_weight_norm=use_weight_norm)
+    meta = make_network(config_dict, "meta", use_weight_norm=use_weight_norm)
 
     moe = MoEAttention(
         read_convolver0,
