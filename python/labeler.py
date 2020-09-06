@@ -76,6 +76,18 @@ def deduplicate_ground_truth_haplotypes(results):
     return deduplicated
 
 
+def gen_ground_truth_genotypes(gt):
+    gt = tuple(gt)
+    itemset = set()
+    itemset.add((0, 0))
+    itemset.add((gt[0], 0))
+    itemset.add((0, gt[0]))
+    itemset.add((gt[1], 0))
+    itemset.add((0, gt[1]))
+    itemset.add(gt)
+    return list(itemset)
+
+
 def enumerate_haplotypes(
     variant_set, ref, anchor, call_level=0, call_type='ground_truth'
 ):
@@ -127,13 +139,7 @@ def enumerate_haplotypes(
         addendum = ""
 
     if call_type == 'ground_truth':
-        gts_for_site = [(0, 0), genotypes]
-
-        if genotypes[0] != 0:
-            gts_for_site.append((0, genotypes[1]))
-
-        if genotypes[1] != 0:
-            gts_for_site.append((genotypes[0], 0))
+        gts_for_site = gen_ground_truth_genotypes(genotypes)
     else:
         gts_for_site = list(itertools.product(range(len(all_alleles)), range(len(all_alleles))))
 
