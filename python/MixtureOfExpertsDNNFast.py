@@ -181,6 +181,10 @@ def collate_function(batch):
     numReadsPerSite1 = []
 
     for items_ in batch:
+        # Anand: Hack added for Platinum Genomes. Need to check in detail later.
+        if items_ is None:
+            continue
+
         items = items_[0]
         depth = items_[1]
         assert(len(items) % 2 == 0)

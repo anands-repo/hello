@@ -760,6 +760,8 @@ void AlleleSearcherLiteFiltered::assemble_alleles_from_reads(bool reassemble) {
                     pair<long, long>(record.start, record.stop)
                 ][record.allele].insert(read_obj.read_id);
                 DEBUG << "For location " << record.start << ", " << record.stop << " found allele " << record.allele << " from read " << read_obj.name;
+            } else {
+                DEBUG << "Discarding allele " << record.allele << " for read name " << read_obj.name << " with mapq " << read_obj.mapq << ", and min q " << record.min_q;
             }
         }
     }

@@ -11,6 +11,11 @@ import collections
 import numpy as np
 
 
+class NoTrueAlleles(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+
 def subsample(siteData, maxNumReads, tensorKey, tensorNumKey):
     allelesOfImport = [a for a in siteData if siteData[a][tensorNumKey][0] > 0];
     readIds = [(a, i) for a in allelesOfImport for i in range(siteData[a][tensorNumKey][0])];
@@ -28,7 +33,16 @@ def subsample(siteData, maxNumReads, tensorKey, tensorNumKey):
             siteData[key][tensorKey] = np.zeros_like(siteData[key][tensorKey])[0: 1];
         else:
             siteData[key][tensorKey] = siteData[key][tensorKey][reads];
-    
+
+
+def num_reads_supporting(site_data, key, alleles):
+    total = 0
+
+    for a in alleles:
+        if a in site_data and key in site_data[a]:
+            total += sum(site_data[a][key])
+
+    return total
 
 def tensorify(siteData, maxNumReads=0):
     alleles = [a for a in siteData if a != 'siteLabel'];
@@ -36,12 +50,16 @@ def tensorify(siteData, maxNumReads=0):
     tensors1 = [];
     labels = [];
 
-    if (maxNumReads > 0) and (sum(siteData[a]['supportingReadsStrict'][0] for a in alleles) > maxNumReads):
+    true_alleles = [a for a in alleles if siteData[a]['label'][0] > 0]
+
+    if len(true_alleles) == 0:
+        raise NoTrueAlleles("No true alleles at site");
+
+    if (maxNumReads > 0) and (num_reads_supporting(siteData, 'supportingReadsStrict', alleles) > maxNumReads):
         subsample(siteData, maxNumReads, 'feature', 'supportingReadsStrict');
 
-    if 'supportingReadsStrict2' in siteData[alleles[0]]:
-        if (maxNumReads > 0) and (sum(siteData[a]['supportingReadsStrict2'][0] for a in alleles) > maxNumReads):
-            subsample(siteData, maxNumReads, 'feature2', 'supportingReadsStrict2');
+    if (maxNumReads > 0) and (num_reads_supporting(siteData, 'supportingReadsStrict2', alleles) > maxNumReads):
+        subsample(siteData, maxNumReads, 'feature2', 'supportingReadsStrict2');
 
     for a in alleles:
         tensors0.append(
@@ -170,8 +188,11 @@ class IterableMemmapDataset(torch.utils.data.IterableDataset):
 
         data = self._fileObject[nextLocation];
 
-        if self.tensorify:
-            return tensorify(data, self.maxReadsPerSite);
+        try:
+            if self.tensorify:
+                return tensorify(data, self.maxReadsPerSite);
+        except NoTrueAlleles:
+            return None
 
         return data;
 
