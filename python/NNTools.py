@@ -827,6 +827,15 @@ class LayerNormModule(torch.nn.Module):
         return result
 
 
+class Transposer(torch.nn.Module):
+    def __init__(self, dims):
+        super().__init__()
+        self.dims = dims
+
+    def forward(self, tensor):
+        return torch.transpose(tensor, *self.dims)
+
+
 torch.nn.Compressor = Compressor
 torch.nn.Flatten = Flatten
 torch.nn.GlobalPool = GlobalPool
@@ -841,3 +850,4 @@ torch.nn.LinearCombination = LinearCombination
 torch.nn.WeightNormedConv1d = WeightNormedConv1d
 torch.nn.WeightNormedLinear = WeightNormedLinear
 torch.nn.LayerNormModule = LayerNormModule
+torch.nn.Transposer = Transposer

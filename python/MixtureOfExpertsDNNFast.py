@@ -831,7 +831,7 @@ def train(
                         for l, param_group in enumerate(optim.param_groups):
                             logWriter.add_scalar("lr_%d" % l, param_group['lr'], trainIterNumber)
 
-                totalLoss += floss
+                totalLoss += floss if (not binaryClassifier) else floss * labels.numel()
 
                 # # Perform checkpoint every CHECKPOINT_FREQ-th (TRAIN) iteration
                 # if iterType == "train":
