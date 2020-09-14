@@ -345,9 +345,7 @@ class WindowedAttentionLayer(torch.nn.Module):
             attn_result_pre = torch.sum(qxkxv, dim=3)
 
         # Combine all heads together
-        attn_result_pre = attn_result_pre.reshape(
-            attn_result_pre.shape[0], attn_result_pre.shape[1], -1
-        )  # [b, l, d]
+        attn_result_pre = torch.flatten(attn_result_pre, start_dim=2, end_dim=3)
 
         # Determine attention skip connection
         if self.stride == 1:
@@ -678,7 +676,7 @@ class BrickedAttention(torch.nn.Module):
 
     def _attn_computations(self, tensor, brick_id):
         # Split tensor into bricks
-        bricks = tensor.reshape(
+        bricks = tensor.view(
             tensor.shape[0],
             tensor.shape[1] // self.window_size,
             self.window_size,
@@ -700,7 +698,7 @@ class BrickedAttention(torch.nn.Module):
 
         # Split into heads
         def split_into_heads(signal):
-            signal = signal.reshape(
+            signal = signal.view(
                 signal.shape[0],  # b
                 signal.shape[1],  # nbricks
                 signal.shape[2],  # window
@@ -718,26 +716,14 @@ class BrickedAttention(torch.nn.Module):
         qxkxv = torch.matmul(qxk, v)  # [b, nbricks, n_heads, window, head_dim]
 
         heads_concatenated_pre = torch.transpose(qxkxv, 2, 3)  # [b, nbricks, window, n_heads, head_dim]
-        heads_concatenated = heads_concatenated_pre.reshape(
-            heads_concatenated_pre.shape[0],  # b
-            heads_concatenated_pre.shape[1],  # nbricks
-            heads_concatenated_pre.shape[2],  # window-size
-            -1,  # embedding size
-        )
-
-        bricks_concatenated = heads_concatenated.reshape(
-            heads_concatenated.shape[0],  # b
-            heads_concatenated.shape[1] * heads_concatenated.shape[2],  # l
-            heads_concatenated.shape[-1]  # e
-        )
+        heads_concatenated = torch.flatten(heads_concatenated_pre, start_dim=3)
+        bricks_concatenated = torch.flatten(heads_concatenated, start_dim=1, end_dim=2)
 
         return bricks_concatenated
 
     def forward(self, tensor):
         # Pad sequence as needed for perfect divisibility
-        orig_seq_length = tensor.shape[1]
         tensor_padded, padding = self._pad_to_divisible_size(tensor)
-        new_seq_length = tensor_padded.shape[1]
 
         # Embed the tensors
         embedded = self.input_layer(tensor_padded) if (self.input_layer is not None) else tensor_padded
@@ -751,9 +737,16 @@ class BrickedAttention(torch.nn.Module):
         padded_embed = torch.nn.functional.pad(embedded, (0, 0, left_zero_pad, right_zero_pad))
         second_brick_layer = self._attn_computations(padded_embed, 1)[:, left_zero_pad: -right_zero_pad]
 
+        # Unpad everything - otherwise layer norm includes padded locations
+        # in normalizations which is incorrect
+        embedded_unpadded = self._unpad(embedded, padding)
+        first_brick_layer_unpadded = self._unpad(first_brick_layer, padding)
+        second_brick_layer_unpadded = self._unpad(second_brick_layer, padding)
+        bricked_attention_result = (first_brick_layer_unpadded + second_brick_layer_unpadded) / 2
+
         # Obtain multihead attention
         multihead_attention = self.layer_norm_attn(
-            embedded + torch.matmul((first_brick_layer + second_brick_layer) / 2, self.W_o)
+            embedded_unpadded + torch.matmul(bricked_attention_result, self.W_o)
         )
 
         # Obtain final linear result
@@ -762,9 +755,6 @@ class BrickedAttention(torch.nn.Module):
                 self.output_layer(multihead_attention) + multihead_attention
             )
         )
-
-        # Unpad the result
-        pre_result = self._unpad(pre_result, padding)
 
         # Stride the result if needed
         return pre_result[:, ::self.stride]
@@ -855,7 +845,7 @@ class SingleBrickedAttention(torch.nn.Module):
 
     def _attn_computations(self, tensor):
         # Split tensor into bricks
-        bricks = tensor.reshape(
+        bricks = tensor.view(
             tensor.shape[0],
             tensor.shape[1] // self.window_size,
             self.window_size,
@@ -877,7 +867,7 @@ class SingleBrickedAttention(torch.nn.Module):
 
         # Split into heads
         def split_into_heads(signal):
-            signal = signal.reshape(
+            signal = signal.view(
                 signal.shape[0],  # b
                 signal.shape[1],  # nbricks
                 signal.shape[2],  # window
@@ -895,18 +885,8 @@ class SingleBrickedAttention(torch.nn.Module):
         qxkxv = torch.matmul(qxk, v)  # [b, nbricks, n_heads, window, head_dim]
 
         heads_concatenated_pre = torch.transpose(qxkxv, 2, 3)  # [b, nbricks, window, n_heads, head_dim]
-        heads_concatenated = heads_concatenated_pre.reshape(
-            heads_concatenated_pre.shape[0],  # b
-            heads_concatenated_pre.shape[1],  # nbricks
-            heads_concatenated_pre.shape[2],  # window-size
-            -1,  # embedding size
-        )
-
-        bricks_concatenated = heads_concatenated.reshape(
-            heads_concatenated.shape[0],  # b
-            heads_concatenated.shape[1] * heads_concatenated.shape[2],  # l
-            heads_concatenated.shape[-1]  # e
-        )
+        heads_concatenated = torch.flatten(heads_concatenated_pre, start_dim=3)
+        bricks_concatenated = torch.flatten(heads_concatenated, start_dim=1, end_dim=2)
 
         return bricks_concatenated
 
