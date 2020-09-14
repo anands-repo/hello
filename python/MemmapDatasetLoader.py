@@ -17,7 +17,7 @@ class NoTrueAlleles(Exception):
 
 
 def subsample(siteData, maxNumReads, tensorKey, tensorNumKey):
-    allelesOfImport = [a for a in siteData if siteData[a][tensorNumKey][0] > 0];
+    allelesOfImport = [a for a in siteData if ((a != 'siteLabel') and (siteData[a][tensorNumKey][0] > 0))];
     readIds = [(a, i) for a in allelesOfImport for i in range(siteData[a][tensorNumKey][0])];
     subsampledIds = random.sample(readIds, maxNumReads);
     readsToSubsample = collections.defaultdict(list);
