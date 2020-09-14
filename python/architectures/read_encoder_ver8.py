@@ -46,6 +46,7 @@ config.append(
             "embedding_dim": 64,
             "head_dim": 8,
             "stride": 1,
+            "use_positional": True,
         }
     }
 )  # [64, 150]
@@ -78,6 +79,7 @@ config.append(
             "embedding_dim": 64,
             "head_dim": 8,
             "stride": 1,
+            "use_positional": True,
         }
     }
 )  # [64, 75]
