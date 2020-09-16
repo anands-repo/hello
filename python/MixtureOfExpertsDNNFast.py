@@ -122,11 +122,13 @@ class WrapperForDataParallel(torch.nn.Module):
         numAllelesPerSite = getattr(payload, 'numAllelesPerSite%d' % device);
         numReadsPerAllele = getattr(payload, 'numReadsPerAllele%d' % device);
         numReadsPerSite = getattr(payload, 'numReadsPerSite%d' % device);
+        reference_segments = getattr(payload, 'reference_segments%d' % device)
 
         return self.dnn(
             tensors,
             numAllelesPerSite,
             numReadsPerAllele,
+            reference_segments,
             numReadsPerSite,
         );
 
@@ -179,6 +181,7 @@ def collate_function(batch):
     labelsPerSite = []
     numReadsPerSite0 = []
     numReadsPerSite1 = []
+    ref_segments = []
 
     for items_ in batch:
         # Anand: Hack added for Platinum Genomes. Need to check in detail later.
@@ -187,6 +190,7 @@ def collate_function(batch):
 
         items = items_[0]
         depth = items_[1]
+        ref_segments.append(items_[2])
         assert(len(items) % 2 == 0)
         numAlleles = len(items) // 2
         numAllelesPerSite.append(numAlleles)
@@ -202,6 +206,7 @@ def collate_function(batch):
         numReadsPerSite1.append(sum([t.shape[0] for t in tensorSet1]))
 
     labels = torch.cat(labelsPerSite, dim=0)
+    ref_segments = torch.stack(ref_segments, dim=0)  # [batch, length, 5]
 
     return (
         (torch.cat(allTensors0, dim=0), torch.cat(allTensors1, dim=0)),
@@ -209,6 +214,7 @@ def collate_function(batch):
         (torch.LongTensor(numReadsPerAllele0), torch.LongTensor(numReadsPerAllele1)),
         torch.LongTensor(numAllelesPerSite),
         (torch.LongTensor(numReadsPerSite0), torch.LongTensor(numReadsPerSite1)),
+        ref_segments,
     )
 
 
@@ -750,12 +756,15 @@ def train(
                     numReadsPerAllele = batch[2]
                     numAllelesPerSite = batch[3]
                     numReadsPerSite = batch[4]
+                    reference_segments = batch[5]  # Added reference segment: Sept 14 2020
 
+                    # Added reference segment: Sept 14 2020
                     batchDict = {
                         'tensors': tensors,
                         'numReadsPerAllele': numReadsPerAllele,
                         'numAllelesPerSite': numAllelesPerSite,
                         'numReadsPerSite': numReadsPerSite,
+                        'reference_segments': reference_segments
                     }
 
                     numAllelesPerSiteAll.append(numAllelesPerSite)

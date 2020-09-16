@@ -35,6 +35,54 @@ except NameError:
         return x;
 
 
+FEATURE_LENGTH = 150
+
+
+def one_hot_encode(bases):
+    """
+    One-hot encode a base sequence
+
+    :param bases: str
+        Base sequence
+
+    :return: np.array
+        A list with one-hot-encoded values
+    """
+    indices = dict(zip('ACGT', range(4)))
+    zeros = torch.zeros(len(bases), 5)
+    encoded_bases = [indices[i] if (i in indices) else 4 for i in bases]
+    zeros[list(range(len(bases))), encoded_bases] = 1
+    return zeros
+
+
+def get_reference_segment(chromosome, start, stop, ref):
+    """
+    Get reference slices in a given region
+
+    :param chromosome: str
+        Chromosome
+
+    :param start: int
+        Start position of variant location
+
+    :param stop: int
+        Stop position of variant location
+
+    :param ref: PySamFastaWrapper
+        Reference object
+
+    :return: np.array
+        Numpy array with one-hot encoded bases
+    """
+    span = FEATURE_LENGTH
+    ref.chrom = chromosome
+    midpoint = (start + stop) // 2
+    left = midpoint - span // 2
+    right = left + span
+    refbases = ''.join(ref[left: right])
+    return one_hot_encode(refbases)
+
+
 def chromosomesInCluster(hotspots):
     """
     Determine chromosomes in a hotspots file
@@ -242,14 +290,17 @@ def postProcessHdf5(
     :param hybrid: bool
         Whether we are in hybrid mode or not
     """
-    memmapperKeys = ['feature', 'feature2', 'label'];
-    memmapperConcatenations = [False, False, True];
+    # Anand: Added reference segment on September 14 2020
+    memmapperKeys = ['feature', 'feature2', 'label', 'segment'];
+    memmapperConcatenations = [False, False, True, False];
 
     if not hybrid:
-        memmapperKeys = ['feature', 'label'];
-        memmapperConcatenations = [False, True];
+        # Anand: Added reference segment on September 14 2020
+        memmapperKeys = ['feature', 'label', 'segment'];
+        memmapperConcatenations = [False, True, False];
 
-    dtypes = {'feature': 'uint8', 'feature2': 'uint8', 'label': 'float32'};
+    # Anand: Added reference segment on September 14 2020
+    dtypes = {'feature': 'uint8', 'feature2': 'uint8', 'label': 'float32', 'segment': 'uint8'};
 
     logging.info("Converting to integrated format");
 
@@ -289,7 +340,8 @@ def addToHDF5File(
     supportingReadsStrict,
     tensors2,
     supportingReads2,
-    supportingReadsStrict2
+    supportingReadsStrict2,
+    segment,
 ):
     """
     Add contents to an hdf5 file
@@ -335,6 +387,9 @@ def addToHDF5File(
 
     :param supportingReadsStrict2:
         Second set of strict supporting reads for hybrid calling
+
+    :param segment: np.array
+        Reference segment
     """
     logging.debug("Writing chr, start, stop = %s, %d, %d to file" % (chromosome, start, stop));
     groupName = '_'.join([chromosome, str(start), str(stop)]);  # We will maintain a flat hierarchy
@@ -357,6 +412,10 @@ def addToHDF5File(
             alleleGroup['feature'][:] = tensor;
             alleleGroup['supportingReads'][:] = supportingReads[i];
             alleleGroup['supportingReadsStrict'][:] = supportingReadsStrict[i];
+
+            # Adding reference segment: adding it to each allele (September 14 2020)
+            alleleGroup.create_dataset('segment', shape=segment.shape, dtype='uint8')
+            alleleGroup['segment'][:] = segment[:]
 
             if (len(tensors2) > 0):
                 tensor2 = tensors2[i];
@@ -406,6 +465,14 @@ def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None):
                 else:
                     missedCalls.append(entry);
             else:
+                # Update Sept 14 2020 - add reference segment here
+                entry['segment'] = get_reference_segment(
+                    entry['chromosome'],
+                    entry['start'],
+                    entry['stop'],
+                    ref,
+                )
+
                 entry['fhandle'] = fhandle;
                 addToHDF5File(**entry);
 
@@ -420,7 +487,7 @@ def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None):
         vhandle.close()
 
 
-def scoreSite(siteDict, network, hybrid=False):
+def scoreSite(siteDict, network, cache, hybrid=False):
     """
     Scores the alleles at a site based on data
 
@@ -429,6 +496,9 @@ def scoreSite(siteDict, network, hybrid=False):
 
     :param network: torch.nn.Module
         Neural network to compute likelihoods
+
+    :param cache: PySamFastaWrapper
+        A Reference object
 
     :param hybrid: bool
         Whether we are running the tool in hybrid mode
@@ -443,8 +513,17 @@ def scoreSite(siteDict, network, hybrid=False):
 
         featureDict[allele] = tensorPacket;
 
+    # Find reference (September 14 2020 - update for using reference segment)
+    ref_segment = get_reference_segment(
+        siteDict['chromosome'],
+        siteDict['start'],
+        siteDict['stop'],
+        cache,
+    )
+    ref_segment = torch.unsqueeze(ref_segment, dim=0)
+
     with torch.no_grad():
-        logLikelihoods = network(featureDict);
+        logLikelihoods = network(featureDict, ref_segment);
 
     return logLikelihoods;
 
@@ -479,7 +558,7 @@ def vcfRecords(siteDict, network, ref, hybrid=False):
         "Supports at site = %s" % str(supportMsg)
     );
 
-    returns = scoreSite(siteDict, network, hybrid);
+    returns = scoreSite(siteDict, network, ref, hybrid);
 
     if type(returns) is dict:
         logLikelihoods = returns;
@@ -689,6 +768,8 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args();
+
+    FEATURE_LENGTH = args.featureLength
 
     if args.only_contained:
         trainDataTools.STRICT_INTERSECTION = True

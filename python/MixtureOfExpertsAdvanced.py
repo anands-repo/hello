@@ -78,7 +78,8 @@ class MoEAttention(torch.nn.Module):
         xattn0,
         xattn1,
         xattn2,
-        combiner,
+        combiner0,
+        combiner1,
         meta,
     ):
         """
@@ -93,6 +94,9 @@ class MoEAttention(torch.nn.Module):
         :param xattn?: NNTools.Network
             Cross-attention modules for comparing allele-level to site-level features
 
+        :param combiner?: NNTools.Network
+            Combiner modules for combining higher-level features from multiple platforms
+
         :param meta: NNTools.Network
             Meta-expert DNN. Neural network works off-of compressed site-level features
         """
@@ -105,8 +109,9 @@ class MoEAttention(torch.nn.Module):
         self.xattn0 = xattn0
         self.xattn1 = xattn1
         self.xattn2 = xattn2
-        self.combiner = combiner
         self.meta = meta
+        self.combiner0 = combiner0
+        self.combiner1 = combiner1
 
     def compress_and_predict(
         self,
@@ -141,58 +146,107 @@ class MoEAttention(torch.nn.Module):
         )
 
         # Attention computation for prediction
-        attn_network = getattr(self, 'xattn%d' % compressor_index)
+        if hasattr(self, 'xattn%d' % compressor_index):
+            attn_network = getattr(self, 'xattn%d' % compressor_index)
 
-        expert_predictions = attn_network(
-            (compressed_features_allele, (expanded_frames_for_site0, expanded_frames_for_site1))
-        )
+            expert_predictions = attn_network(
+                (compressed_features_allele, (expanded_frames_for_site0, expanded_frames_for_site1))
+            )
+        else:
+            expert_predictions = None
 
-        return expert_predictions, (compressed_features_site0, compressed_features_site1)
+        return expert_predictions, (compressed_features_site0, compressed_features_site1), compressed_features_allele
 
-    def expert_predictions(self, read_conv, numAllelesPerSite, numReadsPerAllele, compressor_index):
-        reduced_frames_for_allele = reduceSlots(read_conv, numReadsPerAllele)
-        expert_predictions, frames_at_site = self.compress_and_predict(
-            reduced_frames_for_allele,
-            numAllelesPerSite,
-            compressor_index,
-        )
-
-        return expert_predictions, reduced_frames_for_allele, frames_at_site
-
-    def forward(self, tensors, numAllelesPerSite, numReadsPerAllele, *args, **kwargs):
+    def forward(self, tensors, numAllelesPerSite, numReadsPerAllele, reference_segments, *args, **kwargs):
         read_conv0 = self.read_convolver0(tensors[0].float())
-
-        expert0_predictions, reduced_frames0_for_allele, _ = self.expert_predictions(
-            read_conv0,
+        reduced_frames0_for_allele = reduceSlots(read_conv0, numReadsPerAllele[0])
+        expert0_predictions, f0, compressed_features_allele0 = self.compress_and_predict(
+            reduced_frames0_for_allele,
             numAllelesPerSite,
-            numReadsPerAllele[0],
-            compressor_index=0
+            0
         )
 
+        # Note that for all hybrid modes, we need read_convolver1
+        # Conversely, if read_convolver1 is configured, then this is a hybrid DNN
         if self.read_convolver1 is not None:
             read_conv1 = self.read_convolver1(tensors[1].float())
-
-            expert1_predictions, reduced_frames1_for_allele, _ = self.expert_predictions(
-                read_conv1,
+            reduced_frames1_for_allele = reduceSlots(read_conv1, numReadsPerAllele[1])
+            expert1_predictions, f1, compressed_features_allele1 = self.compress_and_predict(
+                reduced_frames1_for_allele,
                 numAllelesPerSite,
-                numReadsPerAllele[1],
-                compressor_index=1
+                1
             )
 
-            reduced_frames2_for_allele = self.combiner(
-                (reduced_frames0_for_allele, reduced_frames1_for_allele)
-            )
-            expert2_predictions, frames_at_site = self.compress_and_predict(
-                reduced_frames2_for_allele,
-                numAllelesPerSite,
-                compressor_index=2
-            )
+            if hasattr(self, 'compressor2') and self.compressor2:
+                # We can produce hybrid features either directly from read-level features
+                # using a hybrid compressor, or ...
+                assert(hasattr(self, 'xattn2') and self.xattn2), "xattn2 is needed with compressor2"
+                reduced_frames2_for_allele = reduced_frames0_for_allele + reduced_frames1_for_allele
+                expert2_predictions, f2, compressed_features_allele1 = self.compress_and_predict(
+                    reduced_frames2_for_allele,
+                    numAllelesPerSite,
+                    compressor_index=2
+                )
+                # Meta expert uses site frames from scratch
+                site_frames_for_meta = f2[0]
+            elif hasattr(self, 'xattn2') and self.xattn2:
+                # ... alternatively, we can use combiner networks to combine the features at the
+                # allele and site-level and then compare the two using xattn2
+                assert(hasattr(self, 'combiner0') and self.combiner0), "Combiner network expected"
+                assert(hasattr(self, 'combiner1') and self.combiner1), "Combiner network expected"
 
-            meta_predictions = torch.softmax(
-                self.meta(frames_at_site), dim=-1
-            )
+                # Create num alleles per site tensor
+                if read_conv0.is_cuda:
+                    num_alleles_per_site_tensor = torch.LongTensor(numAllelesPerSite).cuda(read_conv0.get_device())
+                else:
+                    num_alleles_per_site_tensor = torch.LongTensor(numAllelesPerSite)
 
-            return [expert0_predictions, expert1_predictions, expert2_predictions], meta_predictions
+                # Create combined allele and site-level features
+                compressed_features_allele2 = self.combiner0((compressed_features_allele0, compressed_features_allele1))
+                compressed_features_site2 = self.combiner1((f0[1], f1[1]))
+                expert2_predictions = self.xattn2((
+                    compressed_features_allele2,
+                    (
+                        None,
+                        torch.repeat_interleave(
+                            compressed_features_site2, repeats=num_alleles_per_site_tensor, dim=0
+                        ),
+                    )
+                ))
+
+                # Meta expert uses site-level features used by xattn2
+                site_frames_for_meta = compressed_features_site2
+            else:
+                expert2_predictions = None
+
+                # Meta expert uses pooled resources from the two experts
+                site_frames_for_meta = reduceSlots(
+                    reduced_frames0_for_allele + reduced_frames1_for_allele,
+                    numAllelesPerSite
+                )
+
+            if self.meta is not None:
+                meta_predictions = torch.softmax(
+                    self.meta((site_frames_for_meta, reference_segments.float())), dim=-1
+                )
+            else:
+                self.meta = None
+
+            # One of three situations are possible
+            if (expert0_predictions is None) and (expert1_predictions is None):
+                # Case 1. Neither expert0 nor expert1, but only expert2 that produces a binary classification
+                assert(expert2_predictions is not None), "No expert prediction is valid"
+                return expert2_predictions
+            elif expert2_predictions is None:
+                # Case 2. No expert2, and expert0 and expert1 work with the meta-expert
+                assert((expert0_predictions is not None) and (expert1_predictions is not None)), "Hybrid data provided, but only single tech prediction is available"
+                expert2_predictions = torch.zeros_like(expert0_predictions)
+                return [expert0_predictions, expert1_predictions, expert2_predictions], meta_predictions
+            elif (expert0_predictions is not None) and (expert1_predictions is not None) and (expert2_predictions is not None):
+                # Case 3. All experts are present and we are off to the races
+                return [expert0_predictions, expert1_predictions, expert2_predictions], meta_predictions
+            else:
+                raise ValueError("Unknown prediction type for hybrid data")
         else:
             return expert0_predictions
 
@@ -449,21 +503,26 @@ class MoEMergedWrapperAdvanced(torch.nn.Module):
             [torch.transpose(featureDict[key][0], 1, 2) for key in alleles], dim=0
         )
 
+        # Note: This is not really a reflection of whether this is a hybrid variant calling mode, but
+        # rather whether we need to combine predictions from multiple experts or not. This is unfortunately named
+        hybrid = self.moeMerged.meta is not None
+
         if None in numReadsPerAllele1:
             tensors1 = None
-            hybrid = False
         else:
             tensors1 = torch.cat(
                 [torch.transpose(featureDict[key][1], 1, 2) for key in alleles], dim=0
             )
-            hybrid = True
 
         return alleles, (tensors0, tensors1), numAllelesPerSite, (numReadsPerAllele0, numReadsPerAllele1), hybrid
 
-    def forward(self, featureDict):
+    def forward(self, featureDict, segment):
         nnInputs = self._singleFeatureDictData(featureDict)
         alleles = nnInputs[0]
-        results = self.moeMerged(*nnInputs[1:-1])
+        # Modifications for accepting reference segment input
+        args = list(nnInputs[1: -1]) + [segment]
+        results = self.moeMerged(*args)
+        ####
         hybrid = nnInputs[-1]
         alleleNumbers = dict({a: i for i, a in enumerate(alleles)})
 
@@ -611,20 +670,23 @@ def create_moe_attention_model(config_dict, *args, **kwargs):
     xattn1 = make_network(config_dict, "xattn1", use_weight_norm=use_weight_norm)
     xattn2 = make_network(config_dict, "xattn2", use_weight_norm=use_weight_norm)
 
-    combiner = make_network(config_dict, "combiner", use_weight_norm=use_weight_norm)
+    combiner0 = make_network(config_dict, "combiner0", use_weight_norm=use_weight_norm)
+    combiner1 = make_network(config_dict, "combiner1", use_weight_norm=use_weight_norm)
+
     meta = make_network(config_dict, "meta", use_weight_norm=use_weight_norm)
 
     moe = MoEAttention(
-        read_convolver0,
-        read_convolver1,
-        compressor0,
-        compressor1,
-        compressor2,
-        xattn0,
-        xattn1,
-        xattn2,
-        combiner,
-        meta,
+        read_convolver0=read_convolver0,
+        read_convolver1=read_convolver1,
+        compressor0=compressor0,
+        compressor1=compressor1,
+        compressor2=compressor2,
+        xattn0=xattn0,
+        xattn1=xattn1,
+        xattn2=xattn2,
+        combiner0=combiner0,
+        combiner1=combiner1,
+        meta=meta,
     )
 
     return moe

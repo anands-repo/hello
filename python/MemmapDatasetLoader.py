@@ -50,6 +50,9 @@ def tensorify(siteData, maxNumReads=0):
     tensors1 = [];
     labels = [];
 
+    if len(alleles) == 0:
+        raise NoTrueAlleles("No alleles at site")
+
     true_alleles = [a for a in alleles if siteData[a]['label'][0] > 0]
 
     if len(true_alleles) == 0:
@@ -90,7 +93,9 @@ def tensorify(siteData, maxNumReads=0):
 
     tensors = list(zip(tensors0, tensors1));
 
-    return tuple(tensors + labels), totalReadDepth;
+    # Get reference data at site (Sept 14 2020)
+    ref_segment = torch.ByteTensor(siteData[alleles[0]]['segment'])
+    return tuple(tensors + labels), totalReadDepth, ref_segment
 
 
 class IterableMemmapDataset(torch.utils.data.IterableDataset):

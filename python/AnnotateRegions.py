@@ -64,6 +64,9 @@ def labelSites(segment, candidates, truthset, left, maxRecords=10):
     alleleConfigurations = [];
     successful = False;
 
+    print(putativeHaplotypes)
+    print(putativeCandidates)
+
     for putativeHaplotypePair in putativeHaplotypes:
         haplotypeCoverage = {haplotype: False for haplotype in putativeHaplotypePair};
 
