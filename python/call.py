@@ -109,6 +109,7 @@ def main(ibam, pbam):
             command_string += " --simple"
             command_string += " --provideFeatures"
             command_string += " --outputPrefix %s" % output_prefix
+            command_string += " --hybrid_hotspot" if args.hybrid_hotspot else ""
             chandle.write(
                 command_string + " >& " + logfilename + "\n"
             )
@@ -319,6 +320,13 @@ if __name__ == "__main__":
         "--network",
         help="Network path",
         required=True,
+    )
+
+    parser.add_argument(
+        "--hybrid_hotspot",
+        help="Enable hybrid hotspot mode",
+        default=False,
+        action="store_true",
     )
 
     args = parser.parse_args()

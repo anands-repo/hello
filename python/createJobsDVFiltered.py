@@ -53,7 +53,18 @@ def doOneRegion(args, chromosome, start, stop, outputPrefix=None):
         begin = start + splitSize * i
         end = begin + splitSize
         outputname = os.path.join(os.getcwd(), "output%d.txt" % i) if (outputPrefix is None) else outputPrefix + "_chromosome%s_job%d.txt" % (chromosome, i)
-        command = cmd(chromosome, begin, end, bam, ref, outputname, args.pacbio, log=args.log, bam2=args.bam2)
+        command = cmd(
+            chromosome,
+            begin,
+            end,
+            bam,
+            ref,
+            outputname,
+            args.pacbio,
+            log=args.log,
+            bam2=args.bam2,
+            hybrid_hotspot=args.hybrid_hotspot,
+        )
         writeCmd(command)
 
     if lastChunk:
