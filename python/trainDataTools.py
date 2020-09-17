@@ -37,6 +37,7 @@ INTERNAL_TIME0 = 0;
 GUARD_BAND = 3
 STRICT_INTERSECTION = False
 MAX_ITEMS_PER_GROUP = 8
+HYBRID_TRUTH_EVAL = False
 
 
 def genotype(record, index=0):
@@ -633,7 +634,7 @@ def get_labeled_candidates(
 
                 for allele in searcher.allelesAtSite:
                     if searcher.hybrid:
-                        if searcher.numReadsSupportingAlleleStrict(allele, 0) > 0:
+                        if HYBRID_TRUTH_EVAL or searcher.numReadsSupportingAlleleStrict(allele, 0) > 0:
                             allelesToTruthFrom.append(allele);
                     else:
                         allelesToTruthFrom.append(allele);

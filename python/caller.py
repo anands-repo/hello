@@ -767,12 +767,22 @@ if __name__ == "__main__":
         action="store_true"
     )
 
+    parser.add_argument(
+        "--hybrid_eval",
+        help="Evaluate ground-truth in hybrid manner",
+        default=False,
+        action="store_true",
+    )
+
     args = parser.parse_args();
 
     FEATURE_LENGTH = args.featureLength
 
     if args.only_contained:
         trainDataTools.STRICT_INTERSECTION = True
+
+    if args.hybrid_eval:
+        trainDataTools.HYBRID_TRUTH_EVAL = True
 
     libCallability.initLogging(args.debug);
     logging.basicConfig(

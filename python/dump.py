@@ -74,9 +74,6 @@ def main_single(bams, pacbio):
                 "--outputDir", "%s" % output_dir
             ]
 
-            if args.hybrid_hotspot:
-                create_cmd += ["--hybrid_hotspot"]
-
             create_cmd += ["--pacbio"] if pacbio else []
             subprocess.call(create_cmd)
 
@@ -132,7 +129,6 @@ def main_single(bams, pacbio):
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
                     command_string += " --pacbio" if pacbio else ""
                     command_string += " --test_labeling" if args.test_labeling else ""
-                    command_string += " --hybrid_hotspot" if args.hybrid_hotspot else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -205,6 +201,9 @@ def main(ibams, pbams, random_combine=False):
                 "--log",
                 "--outputDir", "%s" % output_dir
             ]
+            if args.hybrid_hotspot:
+                create_cmd += ["--hybrid_hotspot"]
+
             subprocess.call(create_cmd)
 
             command = os.path.join(output_dir, "jobs_chromosome%s.sh" % chrom)
@@ -258,6 +257,8 @@ def main(ibams, pbams, random_combine=False):
                     command_string += " --simple"
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
                     command_string += " --test_labeling" if args.test_labeling else ""
+                    command_string += " --hybrid_hotspot" if args.hybrid_hotspot else ""
+                    command_string += " --hybrid_eval" if args.hybrid_eval else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -360,6 +361,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hybrid_hotspot",
         help="Use hybrid hotspot mode",
+        default=False,
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--hybrid_eval",
+        help="Evaluate ground-truth in hybrid manner",
         default=False,
         action="store_true",
     )

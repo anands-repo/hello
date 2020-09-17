@@ -59,6 +59,10 @@ def main(ibam, pbam):
             "--log",
             "--outputDir", "%s" % output_dir
         ]
+
+        if args.hybrid_hotspot:
+            create_cmd += ["--hybrid_hotspot"]
+
         subprocess.call(create_cmd)
 
         command = os.path.join(output_dir, "jobs_chromosome%s.sh" % chrom)

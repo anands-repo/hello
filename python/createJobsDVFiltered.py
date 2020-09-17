@@ -133,6 +133,6 @@ if __name__ == "__main__":
     parser.add_argument("--pacbio", help="Indicate that this is for PacBio reads", action="store_true", default=False)
     parser.add_argument("--log", help="Enable logging", default=False, action="store_true")
     parser.add_argument("--outputDir", help="Output directory", default=None)
-    parser.add_argument("--hybrid_hotspot", help="Use hybrid hotspot detection", default=False)
+    parser.add_argument("--hybrid_hotspot", help="Use hybrid hotspot detection", default=False, action="store_true")
     args = parser.parse_args()
     main(args)
