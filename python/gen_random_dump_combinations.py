@@ -102,5 +102,6 @@ if __name__ == "__main__":
                 command_string += " --truth %s" % args.truth
                 command_string += " --bed %s" % args.bed
                 command_string += " --hybrid_eval"
+                command_string += " --no_data_lst"
 
                 fhandle.write(command_string + '\n')

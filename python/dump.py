@@ -148,13 +148,14 @@ def main_single(bams, pacbio):
                 caller_commands.append(caller_command_filename)
 
     if not args.norun_caller:
-        training_files = os.path.join(args.workdir, "data.lst")
+        if not args.no_data_lst:
+            training_files = os.path.join(args.workdir, "data.lst")
 
-        with open(training_files, 'w') as dhandle:
-            for line in train_files:
-                dhandle.write(line + "\n")
+            with open(training_files, 'w') as dhandle:
+                for line in train_files:
+                    dhandle.write(line + "\n")
 
-        logging.info("Training data files in %s" % training_files)
+            logging.info("Training data files in %s" % training_files)
     else:
         logging.info("Use the following scripts to dump training data")
 
@@ -278,13 +279,14 @@ def main(ibams, pbams, random_combine=False):
                 caller_commands.append(caller_command_filename)
 
     if not args.norun_caller:
-        training_files = os.path.join(args.workdir, "data.lst")
+        if not args.no_data_lst:
+            training_files = os.path.join(args.workdir, "data.lst")
 
-        with open(training_files, "w") as dhandle:
-            for line in train_files:
-                dhandle.write(line + "\n")
+            with open(training_files, "w") as dhandle:
+                for line in train_files:
+                    dhandle.write(line + "\n")
 
-        logging.info("Training data files in %s" % training_files)
+            logging.info("Training data files in %s" % training_files)
     else:
         logging.info("Use the following scripts to dump training data")
 
@@ -370,6 +372,13 @@ if __name__ == "__main__":
         help="Evaluate ground-truth in hybrid manner",
         default=False,
         action="store_true",
+    )
+
+    parser.add_argument(
+        "--no_data_lst",
+        help="Do not dump data.lst",
+        action="store_true",
+        default=False,
     )
 
     args = parser.parse_args()
