@@ -689,6 +689,16 @@ def create_moe_attention_model(config_dict, *args, **kwargs):
         meta=meta,
     )
 
+    # Remove unnecessary components (patch)
+    # This is because the check for xattn0-1 is simply
+    # based on hasattr. For xattn2 we also (correctly) check
+    # whether it is None. I do not want to change the code at
+    # this stage
+    if not moe.xattn0:
+        del moe.xattn0
+    if not moe.xattn1:
+        del moe.xattn1
+
     return moe
 
 
