@@ -17,6 +17,8 @@ CHUNK_SIZE_PACBIO = 10000
 MAX_NUM_READS_ILLUMINA = 10000
 MAX_NUM_READS_PACBIO = 1000
 HYBRID_HOTSPOT = False
+MIN_MAPQ = 10
+Q_THRESHOLD = 10
 
 try:
     profile
@@ -63,8 +65,14 @@ def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
 
     try:
         searcher = AlleleSearcherLite(
-            container, begin, end, cache, strict=False, pacbio=pacbio, hybrid_hotspot=HYBRID_HOTSPOT
+            container, begin, end, cache, strict=False, pacbio=pacbio,
+            hybrid_hotspot=HYBRID_HOTSPOT, q_threshold=Q_THRESHOLD, mapq_threshold=MIN_MAPQ
         )
+
+        if hasattr(searcher, 'searcher'):
+            assert(searcher.searcher.check_q_threshold(Q_THRESHOLD)), "Q threshold not set correctly"
+            assert(searcher.searcher.check_mapq_threshold(MIN_MAPQ)), "MAPQ threshold not set correctly"
+
     except LocationOutOfBounds:
         logging.warning("Out of bounds locations found for chunk %s, %d, %d" % (chromosome, begin, end))
         return
@@ -168,13 +176,33 @@ if __name__ == "__main__":
         default=False,
     )
 
+    parser.add_argument(
+        "--q_threshold",
+        help="Quality score threshold",
+        default=10,
+        type=int        
+    )
+
+    parser.add_argument(
+        "--mapq_threshold",
+        help="Mapping quality threshold",
+        default=10,
+        type=int,
+    )
+
     cache = None
 
     @profile
     def main():
         global cache
         global HYBRID_HOTSPOT
+        global MIN_MAPQ
+        global Q_THRESHOLD
         args = parser.parse_args()
+
+        MIN_MAPQ = args.mapq_threshold
+        Q_THRESHOLD = args.q_threshold
+
         if args.hybrid_hotspot:
             HYBRID_HOTSPOT = True
 

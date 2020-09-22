@@ -13,6 +13,8 @@ def cmd(chromosome, start, stop, bam, ref, output, pacbio=False, log=False, bam2
     command += " --output %s" % output
     command += " --pacbio" if pacbio else ""
     command += " --hybrid_hotspot" if hybrid_hotspot else ""
+    command += " --q_threshold %d" % args.q_threshold
+    command += " --mapq_threshold %d" % args.mapq_threshold
     command += " >& %s" % os.path.splitext(output)[0] + ".log" if log else ""
 
     return command
@@ -134,5 +136,7 @@ if __name__ == "__main__":
     parser.add_argument("--log", help="Enable logging", default=False, action="store_true")
     parser.add_argument("--outputDir", help="Output directory", default=None)
     parser.add_argument("--hybrid_hotspot", help="Use hybrid hotspot detection", default=False, action="store_true")
+    parser.add_argument("--q_threshold", help="Quality score threshold", default=10, type=int)
+    parser.add_argument("--mapq_threshold", help="Mapping quality threshold", default=10, type=int)
     args = parser.parse_args()
     main(args)

@@ -169,6 +169,9 @@ struct AlleleSearcherLiteFiltered
         vector<Read*>&,
         const vector<pair<size_t, size_t>>&
     );
+    bool check_q_threshold(size_t val) { return (this->qThreshold == val); }
+    bool check_mapq_threshold(size_t val) { return (this->minMapQ == val); }
+    void initialize();
 
     AlleleSearcherLiteFiltered(
         const p::list& reads,

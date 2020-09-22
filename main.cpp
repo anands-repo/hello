@@ -129,6 +129,9 @@ BOOST_PYTHON_MODULE(libCallability)
         .def_readwrite("deleteScore", &AlleleSearcherLiteFiltered::deleteScore)
         .def_readwrite("snvThreshold", &AlleleSearcherLiteFiltered::snvThreshold)
         .def_readwrite("indelThreshold", &AlleleSearcherLiteFiltered::indelThreshold)
+        .def_readwrite("minMapQ", &AlleleSearcherLiteFiltered::minMapQ)
+        .def_readwrite("qThreshold", &AlleleSearcherLiteFiltered::qThreshold)
+        .def("initialize", &AlleleSearcherLiteFiltered::initialize)
         .def("determineDifferingRegions", &AlleleSearcherLiteFiltered::determineDifferingRegions)
         .def("assemble_alleles_from_reads", &AlleleSearcherLiteFiltered::assemble_alleles_from_reads)
         .def("assemble", &AlleleSearcherLiteFiltered::assemble)
@@ -138,6 +141,8 @@ BOOST_PYTHON_MODULE(libCallability)
         .def("expandRegion", &AlleleSearcherLiteFiltered::expandRegion)
         .def("addAlleleForAssembly", &AlleleSearcherLiteFiltered::addAlleleForAssembly)
         .def("clearAllelesForAssembly", &AlleleSearcherLiteFiltered::clearAllelesForAssembly)
+        .def("check_q_threshold", &AlleleSearcherLiteFiltered::check_q_threshold)
+        .def("check_mapq_threshold", &AlleleSearcherLiteFiltered::check_mapq_threshold)
         .def("computeFeaturesColoredSimple", &AlleleSearcherLiteFiltered::computeFeaturesColoredSimple);
 
     class_<SiteRecord>("SiteRecord",

@@ -32,6 +32,8 @@ class AlleleSearcherLite:
         useInternalLeftAlignment=False,
         noAlleleLevelFilter=False,
         hybrid_hotspot=False,
+        mapq_threshold=10,
+        q_threshold=10,
     ):
         """
         :param container: list/PileupContainerLite
@@ -63,6 +65,12 @@ class AlleleSearcherLite:
 
         :param hybrid_hotspot: bool
             Enable hybrid hotspot detection
+
+        :param mapq_threshold: int
+            Minimum mapq threshold
+
+        :param q_threshold: int
+            Minimum quality threshold
         """
         self.start = start
         self.stop = stop
@@ -142,6 +150,13 @@ class AlleleSearcherLite:
             stop,
             hybrid_hotspot
         )
+
+        self.searcher.minMapQ = mapq_threshold
+        self.searcher.qThreshold = q_threshold
+
+        logging.debug("Set mapq threshold, q threshold to %d, %d" % (self.searcher.minMapQ, self.searcher.qThreshold))
+
+        self.searcher.initialize()
 
         x = self.differingRegions
 

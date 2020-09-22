@@ -40,6 +40,8 @@ class SearcherFactory:
         noAlleleLevelFilter=False,
         clr=False,
         hybrid_hotspot=False,
+        min_mapq=10,
+        q_threshold=10,
     ):
         """
         Factory object for creating a specific type of allele searcher again and again
@@ -64,6 +66,12 @@ class SearcherFactory:
 
         :param hybrid_hotspot: bool
             Enable hybrid hotspot detection
+
+        :param min_mapq: int
+            Minimum mapping quality
+
+        :param q_threshold: int
+            Minimum quality threshold
         """
         self.featureLength = featureLength
         self.pacbio = pacbio
@@ -72,6 +80,8 @@ class SearcherFactory:
         self.clr = clr
         self.ref = ReferenceCache(database=ref)
         self.hybrid_hotspot = hybrid_hotspot
+        self.min_mapq = min_mapq
+        self.q_threshold = q_threshold
 
     def __call__(self, container, start, stop):
         """
@@ -84,7 +94,7 @@ class SearcherFactory:
         :param stop: int
             Stop co-ordinates
         """
-        return AlleleSearcherLite(
+        searcher = AlleleSearcherLite(
             container=container[0] if ((type(container) is list) and (len(container) == 1)) else container,
             start=start,
             stop=stop,
@@ -94,7 +104,13 @@ class SearcherFactory:
             useInternalLeftAlignment=self.useInternalLeftAlignment,
             noAlleleLevelFilter=self.noAlleleLevelFilter,
             hybrid_hotspot=self.hybrid_hotspot,
+            q_threshold=self.q_threshold,
+            mapq_threshold=self.min_mapq,
         )
+        if hasattr(searcher, 'searcher'):
+            assert(searcher.searcher.check_q_threshold(self.q_threshold)), "Q threshold not set correctly"
+            assert(searcher.searcher.check_mapq_threshold(self.min_mapq)), "MAPQ threshold not set correctly"
+        return searcher
 
 
 class ReadSampler:

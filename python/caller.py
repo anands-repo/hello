@@ -774,6 +774,20 @@ if __name__ == "__main__":
         action="store_true",
     )
 
+    parser.add_argument(
+        "--q_threshold",
+        help="Quality score threshold",
+        default=10,
+        type=int,
+    )
+
+    parser.add_argument(
+        "--mapq_threshold",
+        help="Mapping quality threshold",
+        default=10,
+        type=int,
+    )
+
     args = parser.parse_args();
 
     FEATURE_LENGTH = args.featureLength
@@ -825,6 +839,8 @@ if __name__ == "__main__":
         noAlleleLevelFilter=args.noAlleleLevelFilter,
         clr=False,      # TBD: Currently doesn't support CLR reads
         hybrid_hotspot=args.hybrid_hotspot,
+        min_mapq=args.mapq_threshold,
+        q_threshold=args.q_threshold,
     );
 
     logging.info("Getting callable sites");

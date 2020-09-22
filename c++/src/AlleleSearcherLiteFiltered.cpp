@@ -427,6 +427,10 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
             if (!this->pacbio[i]) num_illumina_reads++;
         }
     }
+}
+
+void AlleleSearcherLiteFiltered::initialize() {
+    DEBUG << "Performing allele counts with filters mapq threshild, q threshold = " << this->minMapQ << ", " << this->qThreshold;
 
     // Initialize allele count object
     for (size_t i = 0; i < this->reference.size(); i++)

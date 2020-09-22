@@ -71,7 +71,9 @@ def main_single(bams, pacbio):
                 "--bam", "%s" % bam,
                 "--ref", "%s" % args.ref,
                 "--log",
-                "--outputDir", "%s" % output_dir
+                "--outputDir", "%s" % output_dir,
+                "--q_threshold", "%d" % args.q_threshold,
+                "--mapq_threshold", "%d" % args.mapq_threshold,
             ]
 
             create_cmd += ["--pacbio"] if pacbio else []
@@ -129,6 +131,8 @@ def main_single(bams, pacbio):
                     command_string += " --outputPrefix %s" % os.path.join(output_dir, "%s_data" % shard)
                     command_string += " --pacbio" if pacbio else ""
                     command_string += " --test_labeling" if args.test_labeling else ""
+                    command_string += " --q_threshold %d" % args.q_threshold
+                    command_string += " --mapq_threshold %d" % args.mapq_threshold
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -200,7 +204,9 @@ def main(ibams, pbams, random_combine=False):
                 "--bam2", "%s" % pbam_selected,
                 "--ref", "%s" % args.ref,
                 "--log",
-                "--outputDir", "%s" % output_dir
+                "--outputDir", "%s" % output_dir,
+                "--q_threshold", "%d" % args.q_threshold,
+                "--mapq_threshold", "%d" % args.mapq_threshold,
             ]
             if args.hybrid_hotspot:
                 create_cmd += ["--hybrid_hotspot"]
@@ -260,6 +266,8 @@ def main(ibams, pbams, random_combine=False):
                     command_string += " --test_labeling" if args.test_labeling else ""
                     command_string += " --hybrid_hotspot" if args.hybrid_hotspot else ""
                     command_string += " --hybrid_eval" if args.hybrid_eval else ""
+                    command_string += " --q_threshold %d" % args.q_threshold
+                    command_string += " --mapq_threshold %d" % args.mapq_threshold
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -379,6 +387,20 @@ if __name__ == "__main__":
         help="Do not dump data.lst",
         action="store_true",
         default=False,
+    )
+
+    parser.add_argument(
+        "--mapq_threshold",
+        help="Threshold for mapping quality score",
+        type=int,
+        default=10
+    )
+
+    parser.add_argument(
+        "--q_threshold",
+        help="Threshold for base quality score",
+        type=int,
+        default=10
     )
 
     args = parser.parse_args()

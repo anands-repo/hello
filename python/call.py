@@ -57,7 +57,9 @@ def main(ibam, pbam):
             "--bam2", "%s" % pbam_selected,
             "--ref", "%s" % args.ref,
             "--log",
-            "--outputDir", "%s" % output_dir
+            "--outputDir", "%s" % output_dir,
+            "--q_threshold", "%d" % args.q_threshold,
+            "--mapq_threshold", "%d" % args.mapq_threshold,
         ]
 
         if args.hybrid_hotspot:
@@ -114,6 +116,8 @@ def main(ibam, pbam):
             command_string += " --provideFeatures"
             command_string += " --outputPrefix %s" % output_prefix
             command_string += " --hybrid_hotspot" if args.hybrid_hotspot else ""
+            command_string += " --q_threshold %d" % args.q_threshold
+            command_string += " --mapq_threshold %d" % args.mapq_threshold
             chandle.write(
                 command_string + " >& " + logfilename + "\n"
             )
@@ -195,7 +199,9 @@ def main_single(bam, pacbio):
             "--bam", "%s" % ib,
             "--ref", "%s" % args.ref,
             "--log",
-            "--outputDir", "%s" % output_dir
+            "--outputDir", "%s" % output_dir,
+            "--q_threshold", "%d" % args.q_threshold,
+            "--mapq_threshold", "%d" % args.mapq_threshold,
         ]
         if pacbio:
             create_cmd.append("--pacbio")
@@ -250,6 +256,8 @@ def main_single(bam, pacbio):
             command_string += " --provideFeatures"
             command_string += " --outputPrefix %s" % output_prefix
             command_string += " --pacbio" if pacbio else ""
+            command_string += " --q_threshold %d" % args.q_threshold
+            command_string += " --mapq_threshold %d" % args.mapq_threshold
             chandle.write(
                 command_string + " >& " + logfilename + "\n"
             )
@@ -331,6 +339,20 @@ if __name__ == "__main__":
         help="Enable hybrid hotspot mode",
         default=False,
         action="store_true",
+    )
+
+    parser.add_argument(
+        "--q_threshold",
+        default=10,
+        type=int,
+        help="Quality threshold",
+    )
+
+    parser.add_argument(
+        "--mapq_threshold",
+        default=10,
+        type=int,
+        help="Mapping quality threshold",
     )
 
     args = parser.parse_args()
