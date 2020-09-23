@@ -62,6 +62,20 @@ if __name__ == "__main__":
         default="",
     )
 
+    parser.add_argument(
+        "--mapq_threshold",
+        help="Threshold for mapping quality score",
+        type=int,
+        default=10
+    )
+
+    parser.add_argument(
+        "--q_threshold",
+        help="Threshold for base quality score",
+        type=int,
+        default=10
+    )
+
     args = parser.parse_args()
 
     CHROMOSOMES = [args.chr_prefix + c for c in CHROMOSOMES]
@@ -103,5 +117,7 @@ if __name__ == "__main__":
                 command_string += " --bed %s" % args.bed
                 command_string += " --hybrid_eval"
                 command_string += " --no_data_lst"
+                command_string += " --q_threshold %d" % args.q_threshold
+                command_string += " --mapq_threshold %d" % args.mapq_threshold
 
                 fhandle.write(command_string + '\n')
