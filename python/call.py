@@ -5,8 +5,9 @@ import random
 import warnings
 import logging
 import glob
+from find_chr_prefixes import get_reference_prefixes
 
-CHROMOSOMES = [str(i) for i in range(1, 23)] + ["X"] + ["Y"]
+CHROMOSOMES = [str(i) for i in range(1, 23)]
 
 
 def main(ibam, pbam):
@@ -27,6 +28,8 @@ def main(ibam, pbam):
         ib_string,
         pb_string
     )
+
+    features_dir = os.path.join(args.workdir, features_dir)
 
     if not os.path.exists(features_dir):
         os.makedirs(features_dir)
@@ -170,6 +173,8 @@ def main_single(bam, pacbio):
         ib_string,
         pb_string
     )
+
+    features_dir = os.path.join(args.workdir, features_dir)
 
     if not os.path.exists(features_dir):
         os.makedirs(features_dir)
@@ -359,6 +364,10 @@ if __name__ == "__main__":
 
     if args.chromosomes:
         CHROMOSOMES = args.chromosomes.split(",")
+    else:
+        ref_prefix = get_reference_prefixes(args.ref)
+        if ref_prefix:
+            CHROMOSOMES = [ref_prefix + i for i in CHROMOSOMES]
 
     logging.basicConfig(level=logging.INFO)
 

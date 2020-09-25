@@ -7,6 +7,7 @@ import logging
 import glob
 import pybedtools
 import PySamFastaWrapper
+from find_chr_prefixes import get_reference_prefixes
 
 CHROMOSOMES = [str(i) for i in range(1, 21)]
 
@@ -407,6 +408,10 @@ if __name__ == "__main__":
 
     if args.chromosomes:
         CHROMOSOMES = args.chromosomes.split(",")
+    else:
+        ref_prefix = get_reference_prefixes(args.ref)
+        if ref_prefix:
+            CHROMOSOMES = [ref_prefix + i for i in CHROMOSOMES]
 
     logging.basicConfig(level=logging.INFO)
 
