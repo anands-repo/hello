@@ -5,6 +5,7 @@ import argparse
 import dump
 import os
 import random
+from find_chr_prefixes import get_reference_prefixes
 
 CHROMOSOMES = dump.CHROMOSOMES
 
@@ -79,6 +80,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     CHROMOSOMES = [args.chr_prefix + c for c in CHROMOSOMES]
+
+    ref_prefix = get_reference_prefixes(args.ref)
+
+    if ref_prefix:
+        CHROMOSOMES = [ref_prefix + i for i in CHROMOSOMES]
 
     if not os.path.exists(args.workdir):
         os.makedirs(args.workdir)
