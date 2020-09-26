@@ -119,6 +119,11 @@ struct Read {
     bool assembled;
     bool has_left_partial;
     bool has_right_partial;
+    static int base_color_offset_a_and_g;
+    static int base_color_offset_t_and_c;
+    static int base_color_stride;
+    static int mapping_quality_cap;
+    static int base_quality_cap;
 
     Read(
         const string& read,
@@ -167,6 +172,8 @@ struct Read {
     void update_allelic_records(const Reference&, const unordered_map<string, vector<AllelicRecord>>&, long, long);
     // Create an allele map from allele records
     void create_allele_map();
+    // Create read features
+    vector<uint8_t> create_read_features(long, long, long, long);
 };
 
 // A method to enumerate all haplotypes in short reads

@@ -143,6 +143,9 @@ BOOST_PYTHON_MODULE(libCallability)
         .def("clearAllelesForAssembly", &AlleleSearcherLiteFiltered::clearAllelesForAssembly)
         .def("check_q_threshold", &AlleleSearcherLiteFiltered::check_q_threshold)
         .def("check_mapq_threshold", &AlleleSearcherLiteFiltered::check_mapq_threshold)
+        .def("gen_features", &AlleleSearcherLiteFiltered::gen_features)
+        .def("get_allele_tensor", &AlleleSearcherLiteFiltered::get_allele_tensor)
+        .def("get_feature_tensor", &AlleleSearcherLiteFiltered::get_feature_tensor)
         .def("computeFeaturesColoredSimple", &AlleleSearcherLiteFiltered::computeFeaturesColoredSimple);
 
     class_<SiteRecord>("SiteRecord",

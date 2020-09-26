@@ -139,6 +139,10 @@ struct AlleleSearcherLiteFiltered
     map<pair<long, long>, unordered_set<string>> alleles_in_regions;
     size_t max_reassembly_region_size;
     bool hybrid_hotspot;
+    vector<pair<size_t, size_t> > non_strict_differing_regions;
+    map<pair<long, long>, unordered_set<string> > non_strict_alleles_in_region;
+    np::ndarray feature_tensors;
+    np::ndarray allele_tensor;
     
     void updateAlleleCounts();
     void listToQuality(const p::list& qualities);
@@ -172,6 +176,10 @@ struct AlleleSearcherLiteFiltered
     bool check_q_threshold(size_t val) { return (this->qThreshold == val); }
     bool check_mapq_threshold(size_t val) { return (this->minMapQ == val); }
     void initialize();
+    void gen_features(const string&, size_t, bool);
+    void get_non_strict_alleles_in_region();
+    np::ndarray get_allele_tensor();
+    np::ndarray get_feature_tensor();
 
     AlleleSearcherLiteFiltered(
         const p::list& reads,

@@ -1,5 +1,11 @@
 #include "Read.h"
 
+int Read::base_color_offset_a_and_g = 40;
+int Read::base_color_offset_t_and_c = 30;
+int Read::base_color_stride = 70;
+int Read::base_quality_cap = 40;
+int Read::mapping_quality_cap = 60;
+
 void Read::_get_read_mapping() {
     long ref_ptr = this->reference_start;
     long rd_ptr = 0;
@@ -329,6 +335,103 @@ string get_reference_bases(const Reference& ref, long start, long stop) {
     }
 
     return sstr.str();
+}
+
+// Provide read features 
+vector<uint8_t> Read::create_read_features(long start, long variant_start, long variant_stop, long length) {
+    long ref_ptr = this->reference_start;
+    long rd_ptr = 0;
+    long cigar_count = 0;
+    long feature_ptr = 0;
+
+    vector<uint8_t> features;
+
+    auto base_color = [](char base) -> int {
+        switch(base) {
+            case 'A': return (Read::base_color_offset_a_and_g + 3 * Read::base_color_stride);
+            case 'G': return (Read::base_color_offset_a_and_g + 2 * Read::base_color_stride);
+            case 'T': return (Read::base_color_offset_t_and_c + 1 * Read::base_color_stride);
+            case 'C': return (Read::base_color_offset_t_and_c + 0 * Read::base_color_stride);
+            default: return 0;
+        }
+    };
+
+    auto mapq_color = [](int qual) -> int {
+        float capped = min(qual, Read::mapping_quality_cap);
+        return int(254 * (1.0 * capped / Read::mapping_quality_cap));
+    };
+
+    auto quality_color = [](int qual) -> int {
+        float capped = min(qual, Read::base_quality_cap);
+        return int(254 * (1.0 * capped / Read::base_quality_cap));
+    };
+
+    for (auto& cigar: cigartuples) {
+        const auto& operation = cigar.first;
+        const auto& length = cigar.second;
+
+        switch(operation) {
+            case BAM_CEQUAL:
+            case BAM_CDIFF:
+            case BAM_CMATCH: {
+                for (int i = 0; i < length; i++) {
+                    long ref_pos = ref_ptr + i;
+                    long rd_pos = rd_ptr + i;
+
+                    if ((ref_pos >= start) && (ref_pos < start + length)) {
+                        features.push_back(base_color(this->read[rd_pos]));
+                        features.push_back(quality_color(this->quality[rd_pos]));
+                        features.push_back(mapq_color(this->mapq));
+                        features.push_back(ref_pos - start);
+                        features.push_back(0);
+                        if ((ref_pos >= variant_start) && (ref_pos < variant_stop)) {
+                            features.push_back(200);
+                        } else {
+                            features.push_back(30);
+                        }
+                        feature_ptr++;
+                    }
+                }
+
+                ref_ptr += length;
+                rd_ptr += length;
+                break;
+            }
+
+            case BAM_CDEL:
+            case BAM_CREF_SKIP: {
+                ref_ptr += length;
+                break;
+            }
+
+            case BAM_CINS: {
+                long ref_pos = ref_ptr;
+
+                for (int i = 0; i < length; i++) {
+                    long rd_pos = rd_ptr + i;
+                    if ((ref_pos >= start) && (ref_pos < start + length)) {
+                        features.push_back(base_color(this->read[rd_pos]));
+                        features.push_back(quality_color(this->quality[rd_pos]));
+                        features.push_back(mapq_color(this->mapq));
+                        features.push_back(ref_pos - start);
+                        features.push_back(i);
+                        if ((ref_pos >= variant_start) && (ref_pos < variant_stop)) {
+                            features.push_back(200);
+                        } else {
+                            features.push_back(30);
+                        }
+                        feature_ptr++;
+                    }
+                }
+            }
+            case BAM_CSOFT_CLIP: {
+                rd_ptr += length;
+                break;
+            }
+        }
+    }
+
+    return features;
 }
 
 #ifndef _READ_TEST_

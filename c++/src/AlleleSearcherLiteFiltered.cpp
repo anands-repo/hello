@@ -390,7 +390,9 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     region_start(start),
     region_stop(stop),
     max_reassembly_region_size(10),
-    hybrid_hotspot(hybrid_hotspot)
+    hybrid_hotspot(hybrid_hotspot),
+    feature_tensors(np::zeros(p::make_tuple(10, 10), np::dtype::get_builtin<uint8_t>())),
+    allele_tensor(np::zeros(p::make_tuple(10, 10), np::dtype::get_builtin<uint8_t>()))
 {
     bool leftAlign = false;
 
@@ -608,17 +610,30 @@ void AlleleSearcherLiteFiltered::determineDifferingRegions(bool strict) {
     CLEAR(this->differingRegions)
     CLEAR(this->differing_regions_i)
     CLEAR(this->differing_regions_p)
+    CLEAR(this->non_strict_differing_regions)
     set<long> differing_locations_i;
     set<long> differing_locations_p;
     set<long> differing_locations;
+
+    // If strict, record non strict differing regions separately
 
     if (!this->hybrid_hotspot) {
         if ((num_illumina_reads > 0) && (num_pacbio_reads == 0)) {
             this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
             cluster_differing_regions_helper(differing_locations_i, differing_regions_i, strict);
+            if (strict) {
+                cluster_differing_regions_helper(differing_locations_i, non_strict_differing_regions, false);
+            } else {
+                non_strict_differing_regions = differing_regions_i;
+            }
         } else if ((num_pacbio_reads > 0) && (num_illumina_reads == 0)) {
             this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
             cluster_differing_regions_helper(differing_locations_p, differing_regions_p, strict);
+            if (strict) {
+                cluster_differing_regions_helper(differing_locations_p, non_strict_differing_regions, false);
+            } else {
+                non_strict_differing_regions = differing_regions_p;
+            }
         } else {
             this->determine_differing_regions_helper(this->counts_i, differing_locations_i, this->minCount, 2 * this->minCount);
             this->determine_differing_regions_helper(this->counts_p, differing_locations_p, this->minCount, this->minCount);
@@ -630,10 +645,20 @@ void AlleleSearcherLiteFiltered::determineDifferingRegions(bool strict) {
                 std::inserter(differing_locations, differing_locations.begin())
             );
             cluster_differing_regions_helper(differing_locations, this->differingRegions, strict);
+            if (strict) {
+                cluster_differing_regions_helper(differing_locations, non_strict_differing_regions, false);
+            } else {
+                non_strict_differing_regions = differingRegions;
+            }
         }
     } else {
         this->determine_differing_regions_hybrid_helper(differing_locations);
         cluster_differing_regions_helper(differing_locations, this->differingRegions, strict);
+        if (strict) {
+            cluster_differing_regions_helper(differing_locations, non_strict_differing_regions, false);
+        } else {
+            non_strict_differing_regions = differingRegions;
+        }
     }
 
     for (auto& item: differingRegions) {
@@ -646,16 +671,28 @@ void AlleleSearcherLiteFiltered::get_alleles_from_reads(
     vector<Read*>& read_objects,
     const vector<pair<size_t, size_t> >& differing_regions
 ) {
+    set<pair<long, long>> differing_regions_set;
+
+    for (auto& item: differing_regions) differing_regions_set.insert(pair<long, long>(item.first, item.second));
+
+    if (differing_regions.empty()) return;
+
     for (auto& read_object: read_objects) {
         for (auto& record: read_object->alleles) {
-            if (
-                (record.min_q >= this->qThreshold) &&
-                (read_object->mapq >= this->minMapQ) &&
-                (record.allele.find("N") == string::npos)
-            ) {
-                alleles[
-                    pair<long, long>(record.start, record.stop)
-                ].insert(record.allele);
+            auto record_location = pair<long, long>(record.start, record.stop);
+
+            // Use the allelic record only if the record matches a differing region
+            // (otherwise it will be out of range of the window we are analyzing)
+            if (differing_regions_set.find(record_location) != differing_regions_set.end()) {
+                if (
+                    (record.min_q >= this->qThreshold) &&
+                    (read_object->mapq >= this->minMapQ) &&
+                    (record.allele.find("N") == string::npos)
+                ) {
+                    alleles[
+                        pair<long, long>(record.start, record.stop)
+                    ].insert(record.allele);
+                }
             }
         }
     }
@@ -682,8 +719,9 @@ void AlleleSearcherLiteFiltered::assemble_alleles_from_reads(bool reassemble) {
 
     vector<Read*> read_objects;
 
+    // When extracting differing regions in reads, use all (non-strict) differing regions
     for (auto& read_obj: this->read_objs) {
-        read_obj.extract_alleles(differingRegions);
+        read_obj.extract_alleles(non_strict_differing_regions);
     }
 
     DEBUG << "Prepared supporting alleles from every read";
@@ -697,6 +735,8 @@ void AlleleSearcherLiteFiltered::assemble_alleles_from_reads(bool reassemble) {
             if (!read_obj.pacbio) read_objects.push_back(&read_obj);
         }
 
+        // When creating alleles for assembly, use
+        // only the strict differingRegions in the window
         get_alleles_from_reads(
             i_alleles,
             read_objects,
@@ -823,6 +863,17 @@ void AlleleSearcherLiteFiltered::assemble_alleles_from_reads(bool reassemble) {
             if (match_set.size() == 1) {
                 supports_in_region[key][*match_set.begin()].insert(read_obj.read_id);
             }
+        }
+    }
+
+    // This is to enable generation of reference graph
+    get_non_strict_alleles_in_region();
+}
+
+void AlleleSearcherLiteFiltered::get_non_strict_alleles_in_region() {
+    for (auto& read: this->read_objs) {
+        for (auto& record: read.alleles) {
+            this->non_strict_alleles_in_region[pair<long, long>(record.start, record.stop)].insert(record.allele);
         }
     }
 }
@@ -1149,6 +1200,148 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
     std::copy(array.begin(), array.end(), reinterpret_cast<uint8_t*>(featureMapNp.get_data()));
 
     return featureMapNp;
+}
+
+void AlleleSearcherLiteFiltered::gen_features(const string& allele, size_t feature_length, bool pacbio_) {
+    long midpoint = (this->assemblyStart + this->assemblyStop) / 2;
+    long left = midpoint - feature_length / 2;
+    long right = left + feature_length;
+
+    // Pull window for feature extraction wide in order to accommodate
+    // any intersected variations
+    for (auto& record: non_strict_alleles_in_region) {
+        if ((record.first.first < left) && (record.first.second > left)) {
+            left = record.first.first;
+        }
+
+        if ((record.first.first < right) && (record.first.second > right)) {
+            right = record.first.second;
+        }
+    }
+
+    // Obtain the locations of non-strict allelic records
+    vector<pair<long, long>> non_strict_keys_vec;
+
+    for (auto& item: non_strict_alleles_in_region) {
+        non_strict_keys_vec.push_back(item.first);
+    }
+
+    // Construct reference graph
+    vector<uint8_t> ref_graph;
+    auto feature_ptr = left;
+    long record_ptr = 0;
+    auto* next_record_location = &non_strict_keys_vec.front();
+
+    while (feature_ptr < right) {
+        if ((feature_ptr > non_strict_keys_vec.back().first) || (!next_record_location)) {
+            next_record_location = nullptr;
+        } else {
+            while (next_record_location->first < feature_ptr) {
+                record_ptr++;
+                if (record_ptr >= non_strict_keys_vec.size()) {
+                    next_record_location = nullptr;
+                    break;
+                }
+                next_record_location = &non_strict_keys_vec[record_ptr];
+            }
+        }
+
+        if (feature_ptr == this->assemblyStart) {
+            // Fill in the allele being requested
+            for (int i = 0; i < allele.size(); i++) {
+                ref_graph.push_back(this->BaseColor(allele[i]));
+                ref_graph.push_back(i);
+                ref_graph.push_back(feature_ptr - left);
+                ref_graph.push_back(200);
+            }
+            feature_ptr = this->assemblyStop;
+        } else if (next_record_location && (feature_ptr == next_record_location->first)) {
+            const auto& next_record = non_strict_alleles_in_region[*next_record_location];
+            for (auto& allele: next_record) {
+                for (int i = 0; i < allele.size(); i++) {
+                    ref_graph.push_back(this->BaseColor(allele[i]));
+                    ref_graph.push_back(i);
+                    ref_graph.push_back(feature_ptr - left);
+                    ref_graph.push_back(30);
+                }
+            }
+            feature_ptr = next_record_location->second;
+        } else {
+            ref_graph.push_back(this->BaseColor(this->reference[feature_ptr - this->windowStart]));
+            ref_graph.push_back(0);
+            ref_graph.push_back(feature_ptr - left);
+            ref_graph.push_back(30);
+            feature_ptr++;
+        }
+    }
+
+    // Construct reference graph numpy array
+    p::tuple shape = p::make_tuple(1, ref_graph.size() / 4, 4);
+    np::dtype dtype = np::dtype::get_builtin<uint8_t>();
+    this->allele_tensor = np::zeros(shape, dtype);
+    std::copy(
+        ref_graph.data(),
+        ref_graph.data() + ref_graph.size(),
+        reinterpret_cast<uint8_t*>(this->allele_tensor.get_data())
+    );
+
+    // Construct read features
+    size_t num_supports = this->numReadsSupportingAlleleStrict(allele, pacbio_);
+    if (num_supports == 0) {
+        // Return dummy array if there is no support
+        shape = p::make_tuple(1, feature_length, 6);
+        this->feature_tensors = np::zeros(shape, dtype);
+        return;
+    }
+
+    vector<vector<uint8_t> > features;
+    for (auto& read_id: this->supports[allele]) {
+        auto& read_obj = this->read_objs[read_id];
+        if (read_obj.pacbio == pacbio_) {
+            features.emplace_back(
+                std::move(
+                    read_obj.create_read_features(left, this->assemblyStart, this->assemblyStop, right - left)
+                )
+            );
+        }
+    }
+
+    // Find maximum length
+    long max_length = 0;
+    for (auto& item: features) max_length = max_length < item.size() / 6? item.size() / 6: max_length;  // std::max({max_length, item.size() / 6});
+
+    // Initialize numpy array
+    shape = p::make_tuple(features.size(), max_length, 6);
+    this->feature_tensors = np::zeros(shape, dtype);
+
+    // Convert features to a single padded array
+    unique_ptr<uint8_t[]> padded_data = std::make_unique<uint8_t[]>(max_length * features.size() * 6);
+    std::fill(
+        &padded_data[0], &padded_data[max_length * features.size() * 6], 0
+    );
+    for(size_t i = 0; i < features.size(); i++) {
+        auto& f = features[i];
+        std::copy(
+            f.data(),
+            f.data() + f.size(),
+            &padded_data[max_length * 6 * i]
+        );
+    }
+
+    // Copy over things to numpy array
+    std::copy(
+        &padded_data[0],
+        &padded_data[max_length * features.size() * 6],
+        reinterpret_cast<uint8_t*>(this->feature_tensors.get_data())
+    );
+}
+
+np::ndarray AlleleSearcherLiteFiltered::get_allele_tensor() {
+    return this->allele_tensor;
+}
+
+np::ndarray AlleleSearcherLiteFiltered::get_feature_tensor() {
+    return this->feature_tensors;
 }
 
 AlleleSearcherLiteFiltered::~AlleleSearcherLiteFiltered()
