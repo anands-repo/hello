@@ -237,7 +237,8 @@ def main(ibams, pbams, random_combine=False):
                 "python",
                 shard_script,
                 "--hotspots", hotspot_name,
-                "--outputPrefix", shard_name
+                "--outputPrefix", shard_name,
+                "--minEntriesPerShard", 2048,
             ]
             subprocess.call(shard_command)
 
