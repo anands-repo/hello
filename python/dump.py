@@ -102,7 +102,8 @@ def main_single(bams, pacbio):
                 "python",
                 shard_script,
                 "--hotspots", hotspot_name,
-                "--outputPrefix", shard_name
+                "--outputPrefix", shard_name,
+                "--minEntriesPerShard", 1024,
             ]
             subprocess.call(shard_command)
 
