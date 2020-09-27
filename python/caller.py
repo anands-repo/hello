@@ -291,16 +291,18 @@ def postProcessHdf5(
         Whether we are in hybrid mode or not
     """
     # Anand: Added reference segment on September 14 2020
-    memmapperKeys = ['feature', 'feature2', 'label', 'segment'];
-    memmapperConcatenations = [False, False, True, False];
+    memmapperKeys = ['feature', 'feature2', 'label', 'segment', 'alleleTensor'];
+    memmapperConcatenations = [False, False, True, False, False];
 
     if not hybrid:
         # Anand: Added reference segment on September 14 2020
-        memmapperKeys = ['feature', 'label', 'segment'];
-        memmapperConcatenations = [False, True, False];
+        memmapperKeys = ['feature', 'label', 'segment', 'alleleTensor'];
+        memmapperConcatenations = [False, True, False, False];
 
     # Anand: Added reference segment on September 14 2020
-    dtypes = {'feature': 'uint8', 'feature2': 'uint8', 'label': 'float32', 'segment': 'uint8'};
+    dtypes = {
+        'feature': 'uint8', 'feature2': 'uint8', 'label': 'float32', 'segment': 'uint8', 'alleleTensor': 'uint8'
+    };
 
     logging.info("Converting to integrated format");
 
@@ -332,6 +334,7 @@ def addToHDF5File(
     start,
     stop,
     alleles,
+    allele_tensors,
     tensors,
     labels,
     siteLabel,
@@ -360,6 +363,9 @@ def addToHDF5File(
 
     :param alleles: list
         List of alleles at site
+
+    :param allele_tensors: list
+        List of allele tensor representations
 
     :param tensors: list
         Feature tensors (np.ndarray)
@@ -408,10 +414,12 @@ def addToHDF5File(
             alleleGroup.create_dataset('feature', shape=tensor.shape, dtype=tensor.dtype);
             alleleGroup.create_dataset('supportingReads', shape=(1,), dtype='int32');
             alleleGroup.create_dataset('supportingReadsStrict', shape=(1,), dtype='int32');
+            alleleGroup.create_dataset('alleleTensor', shape=allele_tensors[i].shape, dtype=allele_tensors[i].dtype)
             alleleGroup['label'][:] = label;
             alleleGroup['feature'][:] = tensor;
             alleleGroup['supportingReads'][:] = supportingReads[i];
             alleleGroup['supportingReadsStrict'][:] = supportingReadsStrict[i];
+            alleleGroup['alleleTensor'][:] = allele_tensors[i]
 
             # Adding reference segment: adding it to each allele (September 14 2020)
             alleleGroup.create_dataset('segment', shape=segment.shape, dtype='uint8')

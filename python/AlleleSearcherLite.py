@@ -220,10 +220,12 @@ class AlleleSearcherLite:
             Feature using numpy
         """
         if self.noReads[index if self.hybrid else 0]:
-            return np.zeros(shape=(1, self.featureLength, 6), dtype=np.uint8)
+            return np.zeros(shape=(1, self.featureLength, 6), dtype=np.uint8), np.zeros(shape=(1, self.featureLength, 6), dtype=np.uint8)
         else:
-            index = index == 1 if self.hybrid else self.pacbio
-            return self.searcher.computeFeaturesColoredSimple(allele, self.featureLength, index)
+            self.searcher.gen_features(allele, self.featureLength, index==1 if self.hybrid else self.pacbio)
+            allele_tensor = self.searcher.get_allele_tensor()
+            feature_tensors = self.searcher.get_feature_tensor()
+            return allele_tensor, feature_tensors
 
     @property
     def cluster(self):

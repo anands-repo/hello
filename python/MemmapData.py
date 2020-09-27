@@ -457,6 +457,7 @@ class MemmapperSingle(torch.utils.data.Dataset):
 
         totalNumItems = 0;
         shape = None;
+        all_shapes = []
 
         with h5py.File(hdf5, 'r') as fhandle:
             for i, location in enumerate(fhandle.keys()):
@@ -474,8 +475,8 @@ class MemmapperSingle(torch.utils.data.Dataset):
                         fhandle[location][key][self.accessKey].shape[0],
                     );
 
-                    if shape is None:
-                        shape = fhandle[location][key][self.accessKey].shape;
+                    shape = fhandle[location][key][self.accessKey].shape;
+                    all_shapes.append(shape)
 
                 totalNumItems += sum(numItemsPerSingleAllele);
                 self.numItemsPerAllele[location] = numItemsPerSingleAllele;
@@ -486,11 +487,16 @@ class MemmapperSingle(torch.utils.data.Dataset):
             logging.info("Completed index, no data found in hdf5 file. Not building memory map");
             return;
 
+        all_shapes = np.array(all_shapes)
+        shape = [
+            np.amax(all_shapes[:, i]) for i in range(1, all_shapes.shape[1])
+        ]
+
         logging.info("Completed index... building memory map");
 
         self.storageName = memmapPrefix + ".%s.memmap" % self.accessKey;
         self.__storage_file = None;
-        self.storageShape = tuple([totalNumItems] + list(shape[1:]));
+        self.storageShape = tuple([totalNumItems] + list(shape));
 
         # This hoop jumping is for backward compatibility
         if dtype != 'float32':
@@ -506,7 +512,7 @@ class MemmapperSingle(torch.utils.data.Dataset):
             mode='w+',
         );
 
-        logging.info("Completed building memory maps, copying over data ... ");
+        logging.info("Completed building memory maps, copying over data, shape = %s ... " % str(self.storageShape));
 
         with h5py.File(hdf5, 'r') as fhandle:
             for i, location in enumerate(self.locations):
@@ -523,6 +529,15 @@ class MemmapperSingle(torch.utils.data.Dataset):
                     assert(
                         self.numItemsPerAllele[location][alleleCounter] == item.shape[0]
                     ), "Mismatch between indexing and copying at site %s" % location;
+
+                    # Zero pad as needed to fit memmap dimensions
+                    padding = [(0, 0)]  # No padding on axis 0
+
+                    for (i, j) in zip(self.storageShape[1: ], item.shape[1:]):
+                        assert(i >= j), "Storage shape should have higher dimensinality than individual data"
+                        padding.append((0, i - j))
+
+                    item = np.pad(item, padding)
 
                     storage[findex + itemCounter: findex + itemCounter + item.shape[0]] = item;
 
@@ -692,6 +707,7 @@ class MemmapperCompound:
                 indexingMode=indexingMode,
                 dtype=dtypes[key],
             );
+            logging.info("Created %s dataset for key %s" % (memtype, key))
 
         self.hdf5 = hdf5;
         self.keys = keys;

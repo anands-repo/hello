@@ -884,6 +884,7 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
         tensors = [];
         labels = [];
         alleles = [];
+        allele_tensors = []
         scores = [];
         supportingReads = [];
         supportingReadsStrict = [];
@@ -911,13 +912,14 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
             alleles.append(allele);
             labels.append(1 if (allele in truths) else 0);
 
-            feature = searcher.computeFeatures(allele, 0);
+            allele_tensor, feature = searcher.computeFeatures(allele, 0);
+            allele_tensors.append(allele_tensor)
             tensors.append(feature);
             supportingReads.append(-1);
             supportingReadsStrict.append(searcher.numReadsSupportingAlleleStrict(allele, 0));
 
             if searcher.hybrid:
-                feature2 = searcher.computeFeatures(allele, 1);
+                _, feature2 = searcher.computeFeatures(allele, 1);
                 tensors2.append(feature2);
                 supportingReads2.append(-1);
                 supportingReadsStrict2.append(searcher.numReadsSupportingAlleleStrict(allele, 1));
@@ -933,6 +935,7 @@ def createTensors(records, searcher, maxAlleleLength=80, hotspotMethod="BOTH"):
             'start': start_,
             'stop': stop_,
             'alleles': alleles,
+            'allele_tensors': allele_tensors,
             'tensors': tensors,
             'labels': labels,
             'siteLabel': siteLabel,

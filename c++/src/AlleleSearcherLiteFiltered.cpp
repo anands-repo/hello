@@ -874,6 +874,10 @@ void AlleleSearcherLiteFiltered::get_non_strict_alleles_in_region() {
     for (auto& read: this->read_objs) {
         for (auto& record: read.alleles) {
             this->non_strict_alleles_in_region[pair<long, long>(record.start, record.stop)].insert(record.allele);
+            // Add reference allele as well
+            this->non_strict_alleles_in_region[pair<long, long>(record.start, record.stop)].insert(
+                this->reference.substr(record.start - this->windowStart, record.stop - record.start)
+            );
         }
     }
 }
@@ -1211,10 +1215,12 @@ void AlleleSearcherLiteFiltered::gen_features(const string& allele, size_t featu
     // any intersected variations
     for (auto& record: non_strict_alleles_in_region) {
         if ((record.first.first < left) && (record.first.second > left)) {
+            DEBUG << "Expanding allele to the left";
             left = record.first.first;
         }
 
         if ((record.first.first < right) && (record.first.second > right)) {
+            DEBUG << "Expanding allele to the right";
             right = record.first.second;
         }
     }
@@ -1231,6 +1237,14 @@ void AlleleSearcherLiteFiltered::gen_features(const string& allele, size_t featu
     auto feature_ptr = left;
     long record_ptr = 0;
     auto* next_record_location = &non_strict_keys_vec.front();
+
+    for (auto& record: non_strict_alleles_in_region) {
+        ostringstream allele_strings;
+        for (auto& a: record.second) {
+            allele_strings << ", " << a;
+        }
+        DEBUG << "Region " << record.first.first << ", " << record.first.second << ", alleles " << allele_strings.str() << endl;
+    }
 
     while (feature_ptr < right) {
         if ((feature_ptr > non_strict_keys_vec.back().first) || (!next_record_location)) {

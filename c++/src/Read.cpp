@@ -338,7 +338,7 @@ string get_reference_bases(const Reference& ref, long start, long stop) {
 }
 
 // Provide read features 
-vector<uint8_t> Read::create_read_features(long start, long variant_start, long variant_stop, long length) {
+vector<uint8_t> Read::create_read_features(long start, long variant_start, long variant_stop, long feature_length) {
     long ref_ptr = this->reference_start;
     long rd_ptr = 0;
     long cigar_count = 0;
@@ -378,7 +378,7 @@ vector<uint8_t> Read::create_read_features(long start, long variant_start, long 
                     long ref_pos = ref_ptr + i;
                     long rd_pos = rd_ptr + i;
 
-                    if ((ref_pos >= start) && (ref_pos < start + length)) {
+                    if ((ref_pos >= start) && (ref_pos < start + feature_length)) {
                         features.push_back(base_color(this->read[rd_pos]));
                         features.push_back(quality_color(this->quality[rd_pos]));
                         features.push_back(mapq_color(this->mapq));
@@ -409,12 +409,12 @@ vector<uint8_t> Read::create_read_features(long start, long variant_start, long 
 
                 for (int i = 0; i < length; i++) {
                     long rd_pos = rd_ptr + i;
-                    if ((ref_pos >= start) && (ref_pos < start + length)) {
+                    if ((ref_pos >= start) && (ref_pos < start + feature_length)) {
                         features.push_back(base_color(this->read[rd_pos]));
                         features.push_back(quality_color(this->quality[rd_pos]));
                         features.push_back(mapq_color(this->mapq));
-                        features.push_back(ref_pos - start);
-                        features.push_back(i);
+                        features.push_back(ref_pos - 1 - start);
+                        features.push_back(i + 1);
                         if ((ref_pos >= variant_start) && (ref_pos < variant_stop)) {
                             features.push_back(200);
                         } else {
@@ -429,6 +429,7 @@ vector<uint8_t> Read::create_read_features(long start, long variant_start, long 
                 break;
             }
         }
+        cigar_count ++;
     }
 
     return features;
