@@ -10,6 +10,12 @@ from find_chr_prefixes import get_reference_prefixes
 CHROMOSOMES = [str(i) for i in range(1, 23)]
 
 
+def parallel_execute(cmd):
+    subprocess.call(
+        "cat %s | shuf | parallel --eta -j %d" % (cmd, args.num_threads), shell=True, executable="/bin/bash"
+    )
+
+
 def main(ibam, pbam):
     if (not ibam) or (not pbam):
         raise NotImplementedError("Only hybrid mode has been implemented")
@@ -74,9 +80,10 @@ def main(ibam, pbam):
         results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
 
         logging.info("Created jobs to create hotspots, running to generate hotspots")
-        subprocess.call(
-            "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
-        )
+        # subprocess.call(
+        #     "cat %s | shuf | parallel --eta -j %d" % (command, args.num_threads), shell=True, executable="/bin/bash"
+        # )
+        parallel_execute(command)
 
         logging.info("Combining all hotspots and sharding")
         hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -133,9 +140,10 @@ def main(ibam, pbam):
 
     logging.info("Launching all caller commands")
 
-    subprocess.call(
-        "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
-    )
+    # subprocess.call(
+    #     "cat %s | parallel -j %d --eta" % (caller_command_filename, args.num_threads), shell=True, executable="/bin/bash"
+    # )
+    parallel_execute(caller_command_filename)
 
     logging.info("Completed runs, checking log files")
 
@@ -216,9 +224,10 @@ def main_single(bam, pacbio):
         results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
 
         logging.info("Created jobs to create hotspots, running to generate hotspots")
-        subprocess.call(
-            "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
-        )
+        # subprocess.call(
+        #     "cat %s | shuf | parallel --eta -j %d" % (command, args.num_threads), shell=True, executable="/bin/bash"
+        # )
+        parallel_execute(command)
 
         logging.info("Combining all hotspots and sharding")
         hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -275,9 +284,10 @@ def main_single(bam, pacbio):
 
     logging.info("Launching all caller commands")
 
-    subprocess.call(
-        "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
-    )
+    # subprocess.call(
+    #     "cat %s | parallel -j %d --eta" % (caller_command_filename, args.num_threads), shell=True, executable="/bin/bash"
+    # )
+    parallel_execute(caller_command_filename)
 
     logging.info("Completed runs, checking log files")
 
@@ -358,6 +368,12 @@ if __name__ == "__main__":
         default=10,
         type=int,
         help="Mapping quality threshold",
+    )
+
+    parser.add_argument(
+        "--num_threads",
+        type=int,
+        default=30,
     )
 
     args = parser.parse_args()

@@ -8,6 +8,7 @@ import glob
 import pybedtools
 import PySamFastaWrapper
 from find_chr_prefixes import get_reference_prefixes
+from call import parallel_execute
 
 CHROMOSOMES = [str(i) for i in range(1, 21)]
 
@@ -84,9 +85,10 @@ def main_single(bams, pacbio):
             results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
 
             logging.info("Created jobs to create hotspots, running to generate hotspots")
-            subprocess.call(
-                "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
-            )
+            # subprocess.call(
+            #     "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
+            # )
+            parallel_execute(command)
 
             logging.info("Combining all hotspots and sharding")
             hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -141,9 +143,10 @@ def main_single(bams, pacbio):
 
             if not args.norun_caller:
                 logging.info("Launching data dump")
-                subprocess.call(
-                    "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
-                )
+                # subprocess.call(
+                #     "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
+                # )
+                parallel_execute(caller_command_filename)
 
                 logging.info("Completed data dump")
 
@@ -219,9 +222,10 @@ def main(ibams, pbams, random_combine=False):
             results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
 
             logging.info("Created jobs to create hotspots, running to generate hotspots")
-            subprocess.call(
-                "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
-            )
+            # subprocess.call(
+            #     "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
+            # )
+            parallel_execute(command)
 
             logging.info("Combining all hotspots and sharding")
             hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -277,9 +281,10 @@ def main(ibams, pbams, random_combine=False):
 
             if not args.norun_caller:
                 logging.info("Launching data dump")
-                subprocess.call(
-                    "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
-                )
+                # subprocess.call(
+                #     "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
+                # )
+                parallel_execute(caller_command_filename)
 
                 logging.info("Completed data dump")
 
@@ -404,6 +409,12 @@ if __name__ == "__main__":
         help="Threshold for base quality score",
         type=int,
         default=10
+    )
+
+    parser.add_argument(
+        "--num_threads",
+        type=int,
+        default=30
     )
 
     args = parser.parse_args()

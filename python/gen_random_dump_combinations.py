@@ -76,6 +76,12 @@ if __name__ == "__main__":
         type=int,
         default=10
     )
+    
+    parser.add_argument(
+        "--num_threads",
+        type=int,
+        default=30
+    )
 
     args = parser.parse_args()
 
@@ -125,5 +131,6 @@ if __name__ == "__main__":
                 command_string += " --no_data_lst"
                 command_string += " --q_threshold %d" % args.q_threshold
                 command_string += " --mapq_threshold %d" % args.mapq_threshold
+                command_string += " --num_threads %d" % args.num_threads
 
                 fhandle.write(command_string + '\n')
