@@ -16,6 +16,14 @@ def parallel_execute(cmd, nt):
     )
 
 
+def get_bam_string(bam):
+    bam = os.path.abspath(bam)
+    bamname0 = os.path.split(bam)[-1]
+    bamname1 = os.path.split(os.path.split(bam)[0])[-1]
+    bamname = bamname1.replace("/", "__") + "___" + bamname0.replace("/", "__")
+    return bamname.replace(".", "__")
+
+
 def main(ibam, pbam):
     if (not ibam) or (not pbam):
         raise NotImplementedError("Only hybrid mode has been implemented")
@@ -27,8 +35,8 @@ def main(ibam, pbam):
 
     ib = ibam
     pbam_selected = pbam
-    ib_string = ib.replace(".", "__").replace("/", "___")
-    pb_string = pbam_selected.replace(".", "__").replace("/", "___")
+    ib_string = get_bam_string(ib)  # ib.replace(".", "__").replace("/", "___")
+    pb_string = get_bam_string(pbam_selected)  # pbam_selected.replace(".", "__").replace("/", "___")
 
     features_dir = "features_%s__%s" % (
         ib_string,
@@ -174,7 +182,7 @@ def main_single(bam, pacbio):
 
     ib = bam
     pbam_selected = None
-    ib_string = ib.replace(".", "__").replace("/", "___")
+    ib_string = get_bam_string(ib)  # ib.replace(".", "__").replace("/", "___")
     pb_string = ""
 
     features_dir = "features_%s__%s" % (

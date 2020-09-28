@@ -9,8 +9,10 @@ import pybedtools
 import PySamFastaWrapper
 from find_chr_prefixes import get_reference_prefixes
 from call import parallel_execute
+from call import get_bam_string
 
 CHROMOSOMES = [str(i) for i in range(1, 21)]
+
 
 
 def intersect(bed, truth, chromosome, prefix):
@@ -54,7 +56,7 @@ def main_single(bams, pacbio):
 
     for bam in bams:
         for chrom in CHROMOSOMES:
-            bam_string = bam.replace(".", "__").replace("/", "___")
+            bam_string = get_bam_string(bam)  # bam.replace(".", "__").replace("/", "___")
 
             output_dir = os.path.join(
                 args.workdir,
@@ -105,7 +107,7 @@ def main_single(bams, pacbio):
                 shard_script,
                 "--hotspots", hotspot_name,
                 "--outputPrefix", shard_name,
-                "--minEntriesPerShard", 2048,
+                "--minEntriesPerShard", str(2048),
             ]
             subprocess.call(shard_command)
 
@@ -187,8 +189,8 @@ def main(ibams, pbams, random_combine=False):
         for chrom in CHROMOSOMES:
             logging.info("Creating hotspot detection jobs for chromosome %s" % chrom)
             pbam_selected = random.sample(pbams, 1)[0] if random_combine else pbams[0]
-            ib_string = ib.replace(".", "__").replace("/", "___")
-            pb_string = pbam_selected.replace(".", "__").replace("/", "___")
+            ib_string = get_bam_string(ib)  # ib.replace(".", "__").replace("/", "___")
+            pb_string = get_bam_string(pbam_selected)  # pbam_selected.replace(".", "__").replace("/", "___")
 
             output_dir = os.path.join(
                 args.workdir,
@@ -242,7 +244,7 @@ def main(ibams, pbams, random_combine=False):
                 shard_script,
                 "--hotspots", hotspot_name,
                 "--outputPrefix", shard_name,
-                "--minEntriesPerShard", 2048,
+                "--minEntriesPerShard", str(2048),
             ]
             subprocess.call(shard_command)
 
