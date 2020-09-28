@@ -10,9 +10,9 @@ from find_chr_prefixes import get_reference_prefixes
 CHROMOSOMES = [str(i) for i in range(1, 23)]
 
 
-def parallel_execute(cmd):
+def parallel_execute(cmd, nt):
     subprocess.call(
-        "cat %s | shuf | parallel --eta -j %d" % (cmd, args.num_threads), shell=True, executable="/bin/bash"
+        "cat %s | shuf | parallel --eta -j %d" % (cmd, nt), shell=True, executable="/bin/bash"
     )
 
 
@@ -83,7 +83,7 @@ def main(ibam, pbam):
         # subprocess.call(
         #     "cat %s | shuf | parallel --eta -j %d" % (command, args.num_threads), shell=True, executable="/bin/bash"
         # )
-        parallel_execute(command)
+        parallel_execute(command, args.num_threads)
 
         logging.info("Combining all hotspots and sharding")
         hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -143,7 +143,7 @@ def main(ibam, pbam):
     # subprocess.call(
     #     "cat %s | parallel -j %d --eta" % (caller_command_filename, args.num_threads), shell=True, executable="/bin/bash"
     # )
-    parallel_execute(caller_command_filename)
+    parallel_execute(caller_command_filename, args.num_threads)
 
     logging.info("Completed runs, checking log files")
 
@@ -227,7 +227,7 @@ def main_single(bam, pacbio):
         # subprocess.call(
         #     "cat %s | shuf | parallel --eta -j %d" % (command, args.num_threads), shell=True, executable="/bin/bash"
         # )
-        parallel_execute(command)
+        parallel_execute(command, args.num_threads)
 
         logging.info("Combining all hotspots and sharding")
         hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -287,7 +287,7 @@ def main_single(bam, pacbio):
     # subprocess.call(
     #     "cat %s | parallel -j %d --eta" % (caller_command_filename, args.num_threads), shell=True, executable="/bin/bash"
     # )
-    parallel_execute(caller_command_filename)
+    parallel_execute(caller_command_filename, args.num_threads)
 
     logging.info("Completed runs, checking log files")
 

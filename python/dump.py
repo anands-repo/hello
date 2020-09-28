@@ -88,7 +88,7 @@ def main_single(bams, pacbio):
             # subprocess.call(
             #     "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
             # )
-            parallel_execute(command)
+            parallel_execute(command, args.num_threads)
 
             logging.info("Combining all hotspots and sharding")
             hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -146,7 +146,7 @@ def main_single(bams, pacbio):
                 # subprocess.call(
                 #     "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
                 # )
-                parallel_execute(caller_command_filename)
+                parallel_execute(caller_command_filename, args.num_threads)
 
                 logging.info("Completed data dump")
 
@@ -225,7 +225,7 @@ def main(ibams, pbams, random_combine=False):
             # subprocess.call(
             #     "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
             # )
-            parallel_execute(command)
+            parallel_execute(command, args.num_threads)
 
             logging.info("Combining all hotspots and sharding")
             hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -284,7 +284,7 @@ def main(ibams, pbams, random_combine=False):
                 # subprocess.call(
                 #     "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
                 # )
-                parallel_execute(caller_command_filename)
+                parallel_execute(caller_command_filename, args.num_threads)
 
                 logging.info("Completed data dump")
 
