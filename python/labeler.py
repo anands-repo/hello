@@ -2,6 +2,7 @@ import logging
 import libCallability
 import copy
 import itertools
+from collections import OrderedDict
 
 MAX_SEGMENT_SIZE = 10 
 
@@ -114,9 +115,9 @@ def enumerate_haplotypes(
         if call_type == 'ground_truth':
             return [((ref[anchor:], ref[anchor:]), 0, 0)]
         else:
-            return {
+            return OrderedDict({
                 (ref[anchor:], ref[anchor:]): []
-            }
+            })
 
     prefix = ref[anchor: variant_set[0].position] if call_level == 0 else ""
 
@@ -145,7 +146,7 @@ def enumerate_haplotypes(
 
     if call_type != 'ground_truth':
         iterand = recursed.items()
-        results = dict()
+        results = OrderedDict()
     else:
         iterand = iter(recursed)
         results = []

@@ -136,6 +136,7 @@ def main(ibam, pbam):
             command_string += " --hybrid_hotspot" if args.hybrid_hotspot else ""
             command_string += " --q_threshold %d" % args.q_threshold
             command_string += " --mapq_threshold %d" % args.mapq_threshold
+            command_string += " --reconcilement_size %d" % args.reconcilement_size
             chandle.write(
                 command_string + " >& " + logfilename + "\n"
             )
@@ -382,6 +383,13 @@ if __name__ == "__main__":
         "--num_threads",
         type=int,
         default=30,
+    )
+
+    parser.add_argument(
+        "--reconcilement_size",
+        help="Size of a hotspot region to enable reconcilement of pacbio/illumina representations",
+        default=10,
+        type=int,
     )
 
     args = parser.parse_args()

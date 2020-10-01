@@ -1,6 +1,6 @@
 import torch
 import torch.utils.data
-import MemmapData
+import MemmapDataLite
 import pickle
 import math
 import copy

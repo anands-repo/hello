@@ -83,6 +83,13 @@ if __name__ == "__main__":
         default=30
     )
 
+    parser.add_argument(
+        "--reconcilement_size",
+        help="Size of a hotspot region to enable reconcilement of pacbio/illumina representations",
+        default=10,
+        type=int,
+    )
+
     args = parser.parse_args()
 
     CHROMOSOMES = [args.chr_prefix + c for c in CHROMOSOMES]
@@ -132,5 +139,6 @@ if __name__ == "__main__":
                 command_string += " --q_threshold %d" % args.q_threshold
                 command_string += " --mapq_threshold %d" % args.mapq_threshold
                 command_string += " --num_threads %d" % args.num_threads
+                command_string += " --reconcilement_size %d" % args.num_threads
 
                 fhandle.write(command_string + '\n')

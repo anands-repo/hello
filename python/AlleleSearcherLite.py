@@ -34,6 +34,7 @@ class AlleleSearcherLite:
         hybrid_hotspot=False,
         mapq_threshold=10,
         q_threshold=10,
+        reassembly_size=10,
     ):
         """
         :param container: list/PileupContainerLite
@@ -71,6 +72,9 @@ class AlleleSearcherLite:
 
         :param q_threshold: int
             Minimum quality threshold
+
+        :param reassembly_size: int
+            Size of reassembly region
         """
         self.start = start
         self.stop = stop
@@ -79,6 +83,7 @@ class AlleleSearcherLite:
         self.noAlleleLevelFilter = noAlleleLevelFilter
         containers = container if (type(container) is list) else [container]
         self.containers = containers
+        self.reassembly_size = reassembly_size
 
         # Arguments for C++ searcher
         reads = []
@@ -153,6 +158,7 @@ class AlleleSearcherLite:
 
         self.searcher.minMapQ = mapq_threshold
         self.searcher.qThreshold = q_threshold
+        self.searcher.max_reassembly_region_size = reassembly_size
 
         logging.debug("Set mapq threshold, q threshold to %d, %d" % (self.searcher.minMapQ, self.searcher.qThreshold))
 
