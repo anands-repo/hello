@@ -5,6 +5,7 @@ import argparse
 import dump
 import os
 import random
+from find_chr_prefixes import get_reference_prefixes
 
 CHROMOSOMES = dump.CHROMOSOMES
 
@@ -75,10 +76,28 @@ if __name__ == "__main__":
         type=int,
         default=10
     )
+    
+    parser.add_argument(
+        "--num_threads",
+        type=int,
+        default=30
+    )
+
+    parser.add_argument(
+        "--reconcilement_size",
+        help="Size of a hotspot region to enable reconcilement of pacbio/illumina representations",
+        default=10,
+        type=int,
+    )
 
     args = parser.parse_args()
 
     CHROMOSOMES = [args.chr_prefix + c for c in CHROMOSOMES]
+
+    ref_prefix = get_reference_prefixes(args.ref)
+
+    if ref_prefix:
+        CHROMOSOMES = [ref_prefix + i for i in CHROMOSOMES]
 
     if not os.path.exists(args.workdir):
         os.makedirs(args.workdir)
@@ -119,5 +138,7 @@ if __name__ == "__main__":
                 command_string += " --no_data_lst"
                 command_string += " --q_threshold %d" % args.q_threshold
                 command_string += " --mapq_threshold %d" % args.mapq_threshold
+                command_string += " --num_threads %d" % args.num_threads
+                command_string += " --reconcilement_size %d" % args.reconcilement_size
 
                 fhandle.write(command_string + '\n')

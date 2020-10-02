@@ -42,6 +42,7 @@ class SearcherFactory:
         hybrid_hotspot=False,
         min_mapq=10,
         q_threshold=10,
+        reassembly_size=10,
     ):
         """
         Factory object for creating a specific type of allele searcher again and again
@@ -72,6 +73,9 @@ class SearcherFactory:
 
         :param q_threshold: int
             Minimum quality threshold
+
+        :param reassembly_size: int
+            Size of the region to allow pacbio-illumina realignment
         """
         self.featureLength = featureLength
         self.pacbio = pacbio
@@ -82,6 +86,7 @@ class SearcherFactory:
         self.hybrid_hotspot = hybrid_hotspot
         self.min_mapq = min_mapq
         self.q_threshold = q_threshold
+        self.reassembly_size = reassembly_size
 
     def __call__(self, container, start, stop):
         """
@@ -106,6 +111,7 @@ class SearcherFactory:
             hybrid_hotspot=self.hybrid_hotspot,
             q_threshold=self.q_threshold,
             mapq_threshold=self.min_mapq,
+            reassembly_size=self.reassembly_size,
         )
         if hasattr(searcher, 'searcher'):
             assert(searcher.searcher.check_q_threshold(self.q_threshold)), "Q threshold not set correctly"

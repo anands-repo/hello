@@ -23,10 +23,13 @@ import PileupDataTools
 import trainDataTools
 import h5py
 import libCallability
-from MemmapData import MemmapperCompound
+from MemmapDataLite import MemmapperCompound
 import pybedtools
+import random
 
 torch.set_num_threads(1);  # Torch to be run using a single thread
+random.seed(13)
+np.random.seed(13)
 
 try:
     profile
@@ -253,7 +256,7 @@ class NoReadsFoundError(Exception):
         return repr(self.value);
 
 
-def copy(inhandle, outhandle, location):
+def copy(inhandle, outhandle, location, exclude_keys):
     outgroup = outhandle.create_group(location);
     ingroup = inhandle[location];
 
@@ -267,6 +270,8 @@ def copy(inhandle, outhandle, location):
         alleleOutGroup = outgroup.create_group(allele);
 
         for attribute in alleleInGroup.keys():
+            if attribute in exclude_keys:
+                continue
             dset = alleleOutGroup.create_dataset(
                 attribute, dtype=alleleInGroup[attribute].dtype, shape=alleleInGroup[attribute].shape
             );
@@ -300,9 +305,7 @@ def postProcessHdf5(
         memmapperConcatenations = [False, True, False, False];
 
     # Anand: Added reference segment on September 14 2020
-    dtypes = {
-        'feature': 'uint8', 'feature2': 'uint8', 'label': 'float32', 'segment': 'uint8', 'alleleTensor': 'uint8'
-    };
+    dtypes = {'feature': 'uint8', 'feature2': 'uint8', 'segment': 'uint8', 'label': 'float32', 'alleleTensor': 'uint8'};
 
     logging.info("Converting to integrated format");
 
@@ -317,15 +320,109 @@ def postProcessHdf5(
         memtype="memmap",
     );
 
-    # Copy to new hdf5 file and replace the old hdf5 file to save space
-    logging.info("Releasing space ... will create a temporary file");
-    inhandle = h5py.File(hdf5name, 'r');
-    outhandle = h5py.File(outputPrefix + ".tmp.hdf5", 'w');
-    for location in inhandle.keys():
-        copy(inhandle, outhandle, location);
-    inhandle.close();
-    outhandle.close();
-    os.rename(outputPrefix + ".tmp.hdf5", hdf5name);
+
+def addToDict(
+    fhandle,
+    chromosome,
+    start,
+    stop,
+    alleles,
+    allele_tensors,
+    tensors,
+    labels,
+    siteLabel,
+    scores,
+    supportingReads,
+    supportingReadsStrict,
+    tensors2,
+    supportingReads2,
+    supportingReadsStrict2,
+    segment,
+):
+    """
+    Add contents to an hdf5 file
+
+    :param fhandle: dict
+        Dictionary data into which to add items
+
+    :param chromosome: str
+        Chromosome
+
+    :param start: int
+        Start position in chromosome reference
+
+    :param stop: int
+        Stop position in chromosome reference
+
+    :param alleles: list
+        List of alleles at site
+
+    :param allele_tensors: list
+        List of allele representations
+
+    :param tensors: list
+        Feature tensors (np.ndarray)
+
+    :param labels: list
+        List of labels in the same order as tensors
+
+    :param siteLabel: int
+        Whether site is heterozygous or homozygous
+
+    :param scores: list
+        Scoring results from network
+
+    :param supportingReads: int
+        Number of supporting reads for each allele
+
+    :param supportingReadsStrict: int
+        Number of reads containing the allele in its entirety
+
+    :param tensors2: list
+        Second set of feature tensors for hybrid variant calling
+
+    :param supportingReads2: list
+        Second set of number of supporting reads for hybrid calling
+
+    :param supportingReadsStrict2:
+        Second set of strict supporting reads for hybrid calling
+
+    :param segment: np.array
+        Reference segment
+    """
+    logging.debug("Writing chr, start, stop = %s, %d, %d to file" % (chromosome, start, stop));
+    groupName = '_'.join([chromosome, str(start), str(stop)]);  # We will maintain a flat hierarchy
+
+    if groupName in fhandle:
+        del fhandle[groupName];
+    else:
+        fhandle[groupName] = dict()
+        mainGroup = fhandle[groupName]
+
+        for i, (allele, tensor, label) in enumerate(zip(alleles, tensors, labels)):
+            mainGroup[allele] = dict()
+            alleleGroup = mainGroup[allele];
+            alleleGroup['label'] = np.zeros(shape=(1, ), dtype=np.float32)
+            alleleGroup['feature'] = np.zeros(shape=tensor.shape, dtype=tensor.dtype)
+            alleleGroup['alleleTensor'] = np.zeros(shape=allele_tensors[i].shape, dtype=allele_tensors[i].dtype)
+            alleleGroup['label'][:] = label;
+            alleleGroup['feature'][:] = tensor;
+            alleleGroup['supportingReads'] = [supportingReads[i]];
+            alleleGroup['supportingReadsStrict'] = [supportingReadsStrict[i]];
+            alleleGroup['alleleTensor'][:] = allele_tensors[i]
+
+            # Adding reference segment: adding it to each allele (September 14 2020)
+            alleleGroup['segment'] = np.zeros(shape=segment.shape, dtype=np.uint8)
+            alleleGroup['segment'][:] = segment[:]
+
+            if (len(tensors2) > 0):
+                tensor2 = tensors2[i];
+                alleleGroup['feature2'] = np.zeros(shape=tensor2.shape, dtype=tensor2.dtype)
+                alleleGroup['feature2'][:] = tensor2;
+                alleleGroup['supportingReads2'] = [supportingReads2[i]];
+                alleleGroup['supportingReadsStrict2'] = [supportingReadsStrict2[i]];
+
+        mainGroup['siteLabel'] = siteLabel
 
 
 def addToHDF5File(
@@ -365,7 +462,7 @@ def addToHDF5File(
         List of alleles at site
 
     :param allele_tensors: list
-        List of allele tensor representations
+        List of allelic representations
 
     :param tensors: list
         Feature tensors (np.ndarray)
@@ -438,7 +535,7 @@ def addToHDF5File(
         mainGroup['siteLabel'][:] = siteLabel;
 
 
-def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None):
+def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None, keep=False):
     """
     Dump training data to disk
 
@@ -456,6 +553,9 @@ def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None):
 
     :param ref: PySamFastaWrapper
         Reference reader
+
+    :param keep: bool
+        Keep HDF5 data in original format
     """
     missedCalls = [];
     tooLong = [];
@@ -465,31 +565,42 @@ def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None):
     if dump_vcf:
         vhandle = open(vcf, 'w')
 
-    with h5py.File(hdf5, 'w') as fhandle:
-        for i, entry in enumerate(datagen):
-            if 'type' in entry:
-                if entry['type'] == "TOO_LONG":
-                    tooLong.append(entry);
-                else:
-                    missedCalls.append(entry);
+    if keep:
+        fhandle = h5py.File(filename + ".hdf5", 'w')
+    else:
+        fhandle = dict()
+
+    for i, entry in enumerate(datagen):
+        if 'type' in entry:
+            if entry['type'] == "TOO_LONG":
+                tooLong.append(entry);
             else:
-                # Update Sept 14 2020 - add reference segment here
-                entry['segment'] = get_reference_segment(
-                    entry['chromosome'],
-                    entry['start'],
-                    entry['stop'],
-                    ref,
-                )
+                missedCalls.append(entry);
+        else:
+            # Update Sept 14 2020 - add reference segment here
+            entry['segment'] = get_reference_segment(
+                entry['chromosome'],
+                entry['start'],
+                entry['stop'],
+                ref,
+            )
 
-                entry['fhandle'] = fhandle;
+            entry['fhandle'] = fhandle;
+
+            if keep:
                 addToHDF5File(**entry);
+            else:
+                addToDict(**entry)
 
-            if (i + 1) % 100 == 0:
-                logging.info("Completed %d locations" % (i + 1));
+        if (i + 1) % 100 == 0:
+            logging.info("Completed %d locations" % (i + 1));
 
-            dump_vcfs_from_labels(entry, ref, vhandle)
+        dump_vcfs_from_labels(entry, ref, vhandle)
 
-    postProcessHdf5(hdf5, filename, hybrid=hybrid);
+    if not keep:
+        postProcessHdf5(fhandle, filename, hybrid=hybrid)
+    else:
+        fhandle.close()
 
     if dump_vcf:
         vhandle.close()
@@ -796,6 +907,20 @@ if __name__ == "__main__":
         type=int,
     )
 
+    parser.add_argument(
+        "--keep_hdf5",
+        help="Retain data as hdf5, do not convert to memmap",
+        default=False,
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--reconcilement_size",
+        help="Size of a hotspot region to enable reconcilement of pacbio/illumina representations",
+        default=10,
+        type=int,
+    )
+
     args = parser.parse_args();
 
     FEATURE_LENGTH = args.featureLength
@@ -849,6 +974,7 @@ if __name__ == "__main__":
         hybrid_hotspot=args.hybrid_hotspot,
         min_mapq=args.mapq_threshold,
         q_threshold=args.q_threshold,
+        reassembly_size=args.reconcilement_size,
     );
 
     logging.info("Getting callable sites");
@@ -885,7 +1011,7 @@ if __name__ == "__main__":
         #     cache = ReferenceCache(database=args.ref);
         #     dump_vcfs_from_labels(datagen, args.outputPrefix + ".labeled", cache)
         ref = ReferenceCache(database=args.ref)
-        dumpTrainingData(datagen, args.outputPrefix, hybrid=(len(bamfiles) > 1), dump_vcf=True, ref=ref);
+        dumpTrainingData(datagen, args.outputPrefix, hybrid=(len(bamfiles) > 1), dump_vcf=True, ref=ref, keep=args.keep_hdf5);
     else:
         assert(args.network is not None), "Provide DNN for variant calling";
         cache = ReferenceCache(database=args.ref);

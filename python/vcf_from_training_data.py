@@ -5,7 +5,8 @@ import argparse
 import vcfFromContigs
 from PySamFastaWrapper import PySamFastaWrapper
 import multiprocessing
-import MemmapData
+# import MemmapData
+import MemmapDataLite
 import _pickle as pickle
 import logging
 import subprocess
@@ -33,7 +34,7 @@ def gen_header(ref):
         reference.chrom = chromosome
         header += "##contig=<ID=%s,length=%d>\n" % (chromosome, len(reference))
 
-    header += '##INFO=<ID=VCFFromTrainingData,Description="Labeled From Ground Truth">\n'
+    header += '##INFO=<ID=VCFFromTrainingData,Type=String,Number=1,Description="Labeled From Ground Truth">\n'
     header += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
     header += '##FILTER=<ID=FAIL,Description="Failed call">\n'
     header += '#' + '\t'.join(["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "SAMPLE1"]) + "\n"
@@ -65,7 +66,7 @@ def vcf_from_file(filename, ref):
         reference.chrom = chromosome
         ref_allele = ''.join(reference[start: stop])
         all_alleles = [a for a in site_data.keys() if a != 'siteLabel']
-        labels = [site_data[a]['label'][0] for a in all_alleles]
+        labels = [site_data[a]['label'][0] > 0 for a in all_alleles]
         allele_label_dict = dict(zip(all_alleles, labels))
         alleles_except_ref_alleles = [a for a in all_alleles if a != ref_allele]
         reordered_alleles = [ref_allele] + alleles_except_ref_alleles
@@ -74,11 +75,13 @@ def vcf_from_file(filename, ref):
         # If there is any discrepancy avoid using the data point
         true_alleles = set(reordered_alleles[i] for i in gt)
 
-        if sum(site_data[a]['supportingReadsStrict'][0] if a in site_data else 0 for a in true_alleles) == 0:
-            null_locations.append((chromosome, start, stop))
-            continue
+        # if sum(site_data[a]['supportingReadsStrict'][0] if a in site_data else 0 for a in true_alleles) == 0:
+        #     logging.debug("Warning, site %s has no supporting reads" % location)
+        #     null_locations.append((chromosome, start, stop))
+        #     continue
 
         if len(gt) == 0:
+            logging.debug("Warning, site %s has no valid genotypes" % location)
             null_locations.append((chromosome, start, stop))
             continue
 
@@ -136,11 +139,18 @@ if __name__ == "__main__":
         required=False
     )
 
+    parser.add_argument(
+        "--debug",
+        default=False,
+        action="store_true",
+        help="Display debug messages",
+    )
+
     args = parser.parse_args()
 
     chr_prefix = args.chr_prefix
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO if not args.debug else logging.DEBUG)
 
     if args.nt > 0:
         workers = multiprocessing.Pool(args.nt)

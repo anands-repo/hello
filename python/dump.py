@@ -8,8 +8,11 @@ import glob
 import pybedtools
 import PySamFastaWrapper
 from find_chr_prefixes import get_reference_prefixes
+from call import parallel_execute
+from call import get_bam_string
 
 CHROMOSOMES = [str(i) for i in range(1, 21)]
+
 
 
 def intersect(bed, truth, chromosome, prefix):
@@ -53,7 +56,7 @@ def main_single(bams, pacbio):
 
     for bam in bams:
         for chrom in CHROMOSOMES:
-            bam_string = bam.replace(".", "__").replace("/", "___")
+            bam_string = get_bam_string(bam)  # bam.replace(".", "__").replace("/", "___")
 
             output_dir = os.path.join(
                 args.workdir,
@@ -84,9 +87,10 @@ def main_single(bams, pacbio):
             results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
 
             logging.info("Created jobs to create hotspots, running to generate hotspots")
-            subprocess.call(
-                "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
-            )
+            # subprocess.call(
+            #     "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
+            # )
+            parallel_execute(command, args.num_threads)
 
             logging.info("Combining all hotspots and sharding")
             hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -102,7 +106,7 @@ def main_single(bams, pacbio):
                 "python",
                 shard_script,
                 "--hotspots", hotspot_name,
-                "--outputPrefix", shard_name
+                "--outputPrefix", shard_name,
             ]
             subprocess.call(shard_command)
 
@@ -134,15 +138,17 @@ def main_single(bams, pacbio):
                     command_string += " --test_labeling" if args.test_labeling else ""
                     command_string += " --q_threshold %d" % args.q_threshold
                     command_string += " --mapq_threshold %d" % args.mapq_threshold
+                    command_string += " --keep_hdf5" if args.keep_hdf5 else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
 
             if not args.norun_caller:
                 logging.info("Launching data dump")
-                subprocess.call(
-                    "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
-                )
+                # subprocess.call(
+                #     "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
+                # )
+                parallel_execute(caller_command_filename, args.num_threads)
 
                 logging.info("Completed data dump")
 
@@ -183,8 +189,8 @@ def main(ibams, pbams, random_combine=False):
         for chrom in CHROMOSOMES:
             logging.info("Creating hotspot detection jobs for chromosome %s" % chrom)
             pbam_selected = random.sample(pbams, 1)[0] if random_combine else pbams[0]
-            ib_string = ib.replace(".", "__").replace("/", "___")
-            pb_string = pbam_selected.replace(".", "__").replace("/", "___")
+            ib_string = get_bam_string(ib)  # ib.replace(".", "__").replace("/", "___")
+            pb_string = get_bam_string(pbam_selected)  # pbam_selected.replace(".", "__").replace("/", "___")
 
             output_dir = os.path.join(
                 args.workdir,
@@ -218,9 +224,10 @@ def main(ibams, pbams, random_combine=False):
             results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
 
             logging.info("Created jobs to create hotspots, running to generate hotspots")
-            subprocess.call(
-                "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
-            )
+            # subprocess.call(
+            #     "cat %s | shuf | parallel --eta -j 30" % command, shell=True, executable="/bin/bash"
+            # )
+            parallel_execute(command, args.num_threads)
 
             logging.info("Combining all hotspots and sharding")
             hotspot_name = os.path.join(output_dir, "hotspots.txt")
@@ -236,7 +243,7 @@ def main(ibams, pbams, random_combine=False):
                 "python",
                 shard_script,
                 "--hotspots", hotspot_name,
-                "--outputPrefix", shard_name
+                "--outputPrefix", shard_name,
             ]
             subprocess.call(shard_command)
 
@@ -269,15 +276,18 @@ def main(ibams, pbams, random_combine=False):
                     command_string += " --hybrid_eval" if args.hybrid_eval else ""
                     command_string += " --q_threshold %d" % args.q_threshold
                     command_string += " --mapq_threshold %d" % args.mapq_threshold
+                    command_string += " --reconcilement_size %d" % args.reconcilement_size
+                    command_string += " --keep_hdf5" if args.keep_hdf5 else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
 
             if not args.norun_caller:
                 logging.info("Launching data dump")
-                subprocess.call(
-                    "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
-                )
+                # subprocess.call(
+                #     "cat %s | parallel -j 30 --eta" % caller_command_filename, shell=True, executable="/bin/bash"
+                # )
+                parallel_execute(caller_command_filename, args.num_threads)
 
                 logging.info("Completed data dump")
 
@@ -402,6 +412,26 @@ if __name__ == "__main__":
         help="Threshold for base quality score",
         type=int,
         default=10
+    )
+
+    parser.add_argument(
+        "--num_threads",
+        type=int,
+        default=30
+    )
+
+    parser.add_argument(
+        "--reconcilement_size",
+        help="Size of a hotspot region to enable reconcilement of pacbio/illumina representations",
+        default=10,
+        type=int,
+    )
+
+    parser.add_argument(
+        "--keep_hdf5",
+        help="Keep hdf5 files",
+        default=False,
+        action="store_true",
     )
 
     args = parser.parse_args()

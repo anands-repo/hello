@@ -358,16 +358,33 @@ def groundTruthReader(vcfname):
     truthSet = collections.defaultdict(intervaltree.IntervalTree);
 
     for record in reader:
+        all_alleles = [record.REF]
+
+        for alt in record.ALT:
+            alt = str(alt)
+            all_alleles.append(alt)
+
+        genotypes = genotype(record)
+        true_alleles = [all_alleles[i] for i in genotypes]
+        sorted_alts = sorted(all_alleles[1:])
+        sorted_all_alleles = [record.REF] + sorted_alts
+        genotypes = [
+            i for i, a in enumerate(sorted_all_alleles) if a in true_alleles
+        ]
+        if len(genotypes) == 1:
+            genotypes = 2 * genotypes
+        record_ = AnnotateRegions.VariantRecord(
+            chromosome=record.CHROM,
+            position=record.POS - 1,
+            ref=record.REF,
+            alt=sorted_alts,
+            gt=genotypes,
+        )
+
         truthSet[record.CHROM].addi(
             record.POS - 1,
             record.POS - 1 + len(record.REF),
-            AnnotateRegions.VariantRecord(
-                chromosome=record.CHROM,
-                position=record.POS - 1,
-                ref=record.REF,
-                alt=[str(s) for s in record.ALT],
-                gt=genotype(record),
-            )
+            record_
         );
 
     return truthSet;
@@ -608,6 +625,9 @@ def get_labeled_candidates(
                 )
             );
 
+        if len(candidateRecords) == 0:
+            continue
+
         candidateRecords = sorted(candidateRecords, key=lambda x: x.position);
 
         if truths is not None:
@@ -644,7 +664,7 @@ def get_labeled_candidates(
                         chromosome=chromosome,
                         position=spot[0],
                         refAllele=refAllele,
-                        allelesAtSite=list(set(allelesToTruthFrom))
+                        allelesAtSite=sorted(list(set(allelesToTruthFrom)))
                     )
                 );
 
