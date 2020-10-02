@@ -139,6 +139,6 @@ if __name__ == "__main__":
                 command_string += " --q_threshold %d" % args.q_threshold
                 command_string += " --mapq_threshold %d" % args.mapq_threshold
                 command_string += " --num_threads %d" % args.num_threads
-                command_string += " --reconcilement_size %d" % args.num_threads
+                command_string += " --reconcilement_size %d" % args.reconcilement_size
 
                 fhandle.write(command_string + '\n')

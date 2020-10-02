@@ -77,7 +77,8 @@ if __name__ == "__main__":
     subprocess.call(
         [
             "tar", "cvf", "%s.tar" % target, target
-        ]
+        ],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
     shutil.rmtree(target)
