@@ -917,7 +917,7 @@ def train(
             # Turned off for now ... can dump the model after training
             # wrapper = MixtureOfExperts.getWrappedDNN(searcher.module.dnn)
             # torch.save(wrapper, os.path.abspath(outputPrefix + ".wrapper.dnn"))
-            torch.save(searcher, os.path.abspath(outputPrefix + ".dnn"))
+            torch.save(searcher, os.path.abspath(outputPrefix + "%d.dnn" % j))
             numIterLossDecrease = 0
         else:
             logging.info("Model fails to improve in curent iteration (%d); total loss = %f" % (j, totalLoss))
