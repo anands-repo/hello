@@ -244,7 +244,7 @@ class MemmapperCompound:
         pickle.dump(self, open(prefix + ".index", "wb"))
 
     def __len__(self):
-        return len(self.datasets[self.keys[0]])
+        return len(self.sundry.keys())
 
     def __getitem__(self, index):
         returns = defaultdict(dict)
@@ -265,7 +265,7 @@ class MemmapperCompound:
 
     @property
     def locations(self):
-        return iter(self.datasets[self.keys[0]].locations)
+        return iter(self.sundry.keys())
 
     def setIndexingMode(self, mode):
         pass
