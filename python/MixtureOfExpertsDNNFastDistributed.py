@@ -21,8 +21,10 @@ import MemmapDatasetLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import torch.multiprocessing as mp
+import time
 
 RANK = float('inf')
+WORLD_SIZE = -1 
 
 
 # For testing purposes (determinism)
@@ -99,11 +101,13 @@ class Payload:
                         value = value.cpu().data.tolist();
                 else:
                     if (type(value) is tuple) or (type(value) is list):
-                        value = tuple(v.cuda(device=device, non_blocking=True) for v in value);
+                        # value = tuple(v.cuda(device=device, non_blocking=True) for v in value);
+                        value = tuple(v.to(device=device) for v in value);
                     else:
                         # This is a special case for 'multiplierMode'
                         if type(value) is not str:
-                            value = value.cuda(device=device, non_blocking=True);
+                            # value = value.cuda(device=device, non_blocking=True);
+                            value = value.to(device=device);
                 setattr(self, key + "%d" % device.index, value);
 
 
@@ -267,6 +271,9 @@ class DataLoaderLocal:
         self.memmaplist = list(memmaplist[start_index: end_index])
         """ Disjointed distribution over """
 
+        # print("start_index, end_index, and total size are %d, %d and %d respectively" % (start_index, end_index, total_num_files), flush=True)
+        # print("memmap list size for rank %d is %d" % (rank, len(self.memmaplist)), flush=True)
+
         random.shuffle(self.memmaplist)
         self.batchSize = batchSize
         self.numWorkers = numWorkers
@@ -347,22 +354,29 @@ class DataLoaderLocal:
 
     def __iter__(self):
         random.shuffle(self.memmaplist)
-        iterableData = MemmapDatasetLoader.IterableMemmapDataset(self.memmaplist, maxReadsPerSite=self.maxReadsPerSite)
+        iterableData = MemmapDatasetLoader.IterableMemmapDataset(
+            self.memmaplist, maxReadsPerSite=self.maxReadsPerSite)
 
         # If we have subsampled sites, enforce the use of the subset rather than
         # the complete set of sites in the training set
         if hasattr(self, 'localeDictionary'):
             iterableData.subsampledLocales = self.localeDictionary
 
+        # print("Before making actual dataloader in rank %d" % self.rank, flush=True)
         loader = torch.utils.data.DataLoader(
             iterableData,
             batch_size=self.batchSize,
             collate_fn=collate_function,
-            num_workers=self.numWorkers,
-            pin_memory=True,
+            num_workers=0,
+            pin_memory=False,
             drop_last=True,  # Drop the last batch of the data for single GPU deployments
         )
-        return iter(loader)
+        # print("After making actual dataloader in rank %d" % self.rank, flush=True)
+
+        # print("Before making actual iterator in rank %d" % self.rank, flush=True)
+        iterator = iter(loader)
+        # print("After making actual iterator in rank %d" % self.rank, flush=True)
+        return iterator
 
     def state_dict(self):
         return {'memmaplist': self.memmaplist}
@@ -490,13 +504,14 @@ def train(
     configDict = importlib.import_module(configFile).configDict
 
     if moeType == "advanced":
-        searcher = WrapperForDataParallel(MixtureOfExpertsAdvanced.createMoEFullMergedAdvancedModel(configDict, useSeparateMeta=useSeparateMeta))
+        raise NotImplementedError
     elif moeType == "attention":
-        searcher = WrapperForDataParallel(
-            MixtureOfExpertsAdvanced.create_moe_attention_model(
-                configDict
-            )
-        )
+        # searcher = WrapperForDataParallel(
+        #     MixtureOfExpertsAdvanced.create_moe_attention_model(
+        #         configDict
+        #     )
+        # )
+        searcher = MixtureOfExpertsAdvanced.create_moe_attention_model(configDict)
     else:
         raise NotImplementedError("Only advanced MixtureOfExperts is accepted")
 
@@ -511,9 +526,18 @@ def train(
     if initMeta:
         initMetaToUniform(searcher.dnn)
 
-    searcher.to(gpu)
+    # print("Moving to gpu %d from rank %d" % (gpu, gpu), flush=True)
+
     devices = [torch.device("cuda:%d" % gpu)]
-    searcher = DDP(searcher, device_ids=[gpu])
+    numParams = countParams(searcher)
+    searcher.to(devices[0])
+    searcher.train(True)
+
+    # print("Rank %d moved to device" % gpu, flush=True)
+
+    searcher = DDP(searcher, device_ids=devices)
+
+    # print("Started DDP on rank %d" % gpu, flush=True)
 
     if onlyEval:
         if RANK == 0: logging.info("Loading model for evaluation from path %s" % model)
@@ -569,11 +593,10 @@ def train(
             if RANK == 0: logging.info("Reusing training loss in validation")
             vLossFn = qLossFn
 
-    if cuda:
-        qLossFn.cuda()
-
-    if useSeparateValLoss and cuda:
-        vLossFn.cuda()
+    # print("Moving q loss function to device in GPU %d" % gpu, flush=True)
+    qLossFn.train(True)
+    qLossFn.to(devices[0])
+    # print("Moved q loss function to device in GPU %d" % gpu, flush=True)
 
     totalLoss = 0
     numIterLossDecrease = 0
@@ -633,23 +656,22 @@ def train(
         torch.save(checkpoint, outputPrefix + ".epoch%d.checkpoint" % epoch)
         if RANK == 0: logging.info("Performed checkpointing; epoch: %d, batch: %d, itertype: %s" % (epoch, batch, itertype))
 
-    numParams = countParams(searcher)
     trainIterNumber = 0
 
     if RANK == 0: logging.info("Starting training of model with %d parameters" % numParams)
 
-    assert(cuda), "This program only works with GPUs"
+    # print("Before epochs rank %d" % gpu, flush=True)
 
     for j in range(numEpochs):
         # Only training iteration is performed for distributed training
         itertypeList = ['train']
 
+        # print("Entered epoch rank %d" % gpu, flush=True)
+
         for iterType in itertypeList:
             totalLoss = 0
             totalQ = 0
             loader = tLoader if iterType == "train" else vLoader
-            searcher.train(iterType == "train")
-            qLossFn.train(iterType == "train")
 
             # # At the start of each training iteration, shuffle the indices
             # # Currently, we do not shuffle the indices for the validation iteration
@@ -663,27 +685,19 @@ def train(
 
             i_ = 0
 
+            # print("Before making iterator %d" % gpu, flush=True)
+
             loaderIter = iter(loader)
+
+            # print("After making iterator %d" % gpu, flush=True)
             numCorrect = 0
             numLabels = 0
 
-            while True:
-                collectedBatches = []
-                dummyPadLength = 0
-                dummyPadLengthAlleles = 0
+            # print("Here1 rank %d" % gpu, flush=True)
+
+            # while True:
+            for i, batch in enumerate(loaderIter):
                 indiv = None
-
-                try:
-                    for _ in range(len(devices)):
-                        collectedBatches.append(next(loaderIter))
-                        i_ += 1
-                except StopIteration:
-                    if RANK == 0: logging.info("Completed epoch")
-                    # The last multi-batch (multi-GPU case) is discarded.
-                    # Since shuffling is on, this isn't a problem
-                    break
-
-                i = i_
 
                 logging.debug("Starting batch")
 
@@ -691,32 +705,36 @@ def train(
                 labels = []
                 numAllelesPerSiteAll = []
 
-                for batch in collectedBatches:
-                    tensors = batch[0]
-                    labels.append(batch[1])
-                    numReadsPerAllele = batch[2]
-                    numAllelesPerSite = batch[3]
-                    numReadsPerSite = batch[4]
-                    reference_segments = batch[5]  # Added reference segment: Sept 14 2020
+                tensors = batch[0]
+                labels = batch[1]
+                numReadsPerAllele = batch[2]
+                numAllelesPerSite = batch[3]
+                numReadsPerSite = batch[4]
+                reference_segments = batch[5]
+                numAllelesPerSiteAll = numAllelesPerSite.cpu().tolist()
 
-                    # Added reference segment: Sept 14 2020
-                    batchDict = {
-                        'tensors': tensors,
-                        'numReadsPerAllele': numReadsPerAllele,
-                        'numAllelesPerSite': numAllelesPerSite,
-                        'numReadsPerSite': numReadsPerSite,
-                        'reference_segments': reference_segments
-                    }
+                # print("Here2 rank %d" % gpu)
 
-                    numAllelesPerSiteAll.append(numAllelesPerSite)
-                    batches.append(batchDict)
+                def cudify(data):
+                    if type(data) is tuple or type(data) is list:
+                        return tuple(d.to(devices[0]) for d in data)
+                    else:
+                        return data.to(devices[0])
 
-                numAllelesPerSiteAll = torch.cat(numAllelesPerSiteAll, dim=0).tolist()
-                payload = Payload(
-                    devices, batches, listTypes=['numReadsPerAllele', 'numAllelesPerSite', 'numReadsPerSite']
-                )
-                labels = torch.cat(labels, dim=0)
-                labels = (labels.cuda(non_blocking=True) > 0)
+                def listify(data):
+                    if type(data) is tuple or type(data) is list:
+                        return tuple(d.cpu().tolist() for d in data)
+                    else:
+                        return data.cpu().tolist()
+                
+                # print("Preparing payload for rank %d" % gpu, flush=True)
+                tensors = cudify(tensors)
+                labels = cudify(labels)
+                numReadsPerAllele = listify(numReadsPerAllele)
+                numAllelesPerSite = listify(numAllelesPerSite)
+                numReadsPerSite = listify(numReadsPerSite)
+                reference_segments = cudify(reference_segments)
+                # print("Completed preparing payload for rank %d" % gpu, flush=True)
 
                 if iterType == "train":
                     # Use either SGDR scheduling or learning-rate warmup as needed
@@ -729,7 +747,13 @@ def train(
                         scheduler.step(j + i / len(tLoader))
 
                     trainIterNumber += 1
-                    results = searcher(payload)
+                    results = searcher(
+                        tensors,
+                        numAllelesPerSite,
+                        numReadsPerAllele,
+                        reference_segments,
+                        numReadsPerSite
+                    )
                     losses_ = qLossFn(results, labels, numAllelesPerSiteAll)
 
                     # if len(losses_) > 1:
@@ -745,11 +769,11 @@ def train(
                     try:
                         losses.backward()
                     except Exception:
-                        logging.error("Caught exception in backward")
+                        logging.error("Caught exception in backward in rank %d" % gpu)
                         logging.error("Saving model parameters, and data that resulted in error, and exiting ... ")
-                        torch.save(searcher, os.path.abspath(outputPrefix + ".err.dnn"))
-                        torch.save(payload, os.path.abspath(outputPrefix + ".payload.pth"))
-                        sys.exit(0)
+                        torch.save(searcher, os.path.abspath(outputPrefix + ".rank%d.err.dnn" % gpu))
+                        torch.save(payload, os.path.abspath(outputPrefix + ".rank%d.payload.pth" % gpu))
+                        raise ValueError
 
                     optim.step()
                 else:
@@ -852,14 +876,16 @@ def train(
             torch.save(searcher, os.path.abspath(outputPrefix + "%d.dnn" % j))
             numIterLossDecrease = 0
 
-        dist.barrier()
+        # dist.barrier()
 
     if RANK == 0: logging.info("Completed all training iterations")
 
 
 def main(gpu, args):
     global RANK
+    global WORLD_SIZE
     RANK = args.rank * args.num_gpus + gpu
+    WORLD_SIZE = args.nodes * args.num_gpus
 
     logging.basicConfig(
         level=(logging.INFO if not args.debug else logging.DEBUG),
@@ -869,7 +895,7 @@ def main(gpu, args):
 
     """ Initialize multi-node """
     dist.init_process_group(
-        backend='nccl', init_method='env://', world_size=args.nodes, rank=RANK
+        backend='nccl', init_method='env://', world_size=WORLD_SIZE, rank=RANK
     )
 
     if args.tensorLog is not None:
@@ -899,7 +925,7 @@ def main(gpu, args):
         numWorkers=args.numWorkers,
         batchSize=args.batchSize,
         files=args.data,
-        worldSize=args.nodes,
+        worldSize=WORLD_SIZE,
         rank=RANK,
         overfit=args.overfit,
         pruneHomozygous=args.pruneHomozygous,
@@ -938,7 +964,7 @@ def main(gpu, args):
 
     train(
         gpu=gpu,
-        worldSize=args.nodes,
+        worldSize=WORLD_SIZE,
         rank=RANK,
         numEpochs=args.numEpochs,
         lr=args.lr,
