@@ -862,7 +862,7 @@ def main(args):
     logging.basicConfig(
         level=(logging.INFO if not args.debug else logging.DEBUG),
         format='%(asctime)-15s %(message)s',
-        filename=args.output
+        filename=args.outputPrefix + "_logging_information.log"
     )
 
     """ Initialize multi-node """
