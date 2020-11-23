@@ -264,7 +264,7 @@ class DataLoaderLocal:
         files_per_rank = math.ceil(total_num_files / worldSize)
         start_index = rank * files_per_rank
         end_index = min((rank + 1) * files_per_rank, total_num_files)
-        self.memmaplist = memmaplist[start_index: end_index]
+        self.memmaplist = list(memmaplist[start_index: end_index])
         """ Disjointed distribution over """
 
         random.shuffle(self.memmaplist)
@@ -425,7 +425,13 @@ def dataLoader(
 
     tList = memmaplist
     tLoader = DataLoaderLocal(
-        tList, worldSize, rank, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate, maxReadsPerSite=maxReadsPerSite
+        tList,
+        worldSize,
+        rank,
+        batchSize=batchSize,
+        numWorkers=0,
+        homSNVKeepRate=homSNVKeepRate,
+        maxReadsPerSite=maxReadsPerSite
     )
 
     if RANK == 0: logging.info("Compiled %d training examples" % (len(tLoader) * batchSize))
