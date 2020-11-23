@@ -425,7 +425,7 @@ def dataLoader(
 
     tList = memmaplist
     tLoader = DataLoaderLocal(
-        tList, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate, maxReadsPerSite=maxReadsPerSite
+        tList, worldSize, rank, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate, maxReadsPerSite=maxReadsPerSite
     )
 
     if RANK == 0: logging.info("Compiled %d training examples" % (len(tLoader) * batchSize))
@@ -437,6 +437,7 @@ def dataLoader(
 def train(
     worldSize,
     rank,
+    gpu,
     numEpochs=10,
     lr=1e-3,
     configFile=None,
@@ -504,11 +505,9 @@ def train(
     if initMeta:
         initMetaToUniform(searcher.dnn)
 
-    if cuda:
-        searcher.cuda()
-
-    devices = [torch.device('cuda:%d' % i) for i in range(torch.cuda.device_count())]
-    searcher = DDP(searcher, device_ids=[i for i in range(torch.cuda.device_count())])
+    searcher.to(gpu)
+    devices = [torch.device("cuda:%d" % gpu)]
+    searcher = DDP(searcher, device_ids=[gpu])
 
     if onlyEval:
         if RANK == 0: logging.info("Loading model for evaluation from path %s" % model)
@@ -678,7 +677,7 @@ def train(
                     # Since shuffling is on, this isn't a problem
                     break
 
-                i = i_ + batchStart
+                i = i_
 
                 logging.debug("Starting batch")
 
@@ -812,9 +811,6 @@ def train(
                 logWriter.add_scalar("epoch_marker", 0.0, trainIterNumber - 1)
                 logWriter.add_scalar("epoch_marker", 1.0, trainIterNumber)
 
-            # Reset batch start - this may have been loaded from a checkpoint
-            batchStart = 0
-
             # If learning-rate warm-up is used, then delete the warmup scheduler
             # and recreate a scheduler based on lrFactor, or SGDR as necessary
             if warmup and (j == 0) and (iterType == "train"):
@@ -855,9 +851,9 @@ def train(
     if RANK == 0: logging.info("Completed all training iterations")
 
 
-def main(args):
+def main(gpu, args):
     global RANK
-    RANK = args.rank
+    RANK = args.rank * args.num_gpus + gpu
 
     logging.basicConfig(
         level=(logging.INFO if not args.debug else logging.DEBUG),
@@ -867,7 +863,7 @@ def main(args):
 
     """ Initialize multi-node """
     dist.init_process_group(
-        backend='nccl', init_method='env://', world_size=args.nodes, rank=args.rank
+        backend='nccl', init_method='env://', world_size=args.nodes, rank=RANK
     )
 
     if args.tensorLog is not None:
@@ -898,7 +894,7 @@ def main(args):
         batchSize=args.batchSize,
         files=args.data,
         worldSize=args.nodes,
-        rank=args.rank,
+        rank=RANK,
         overfit=args.overfit,
         pruneHomozygous=args.pruneHomozygous,
         valData=args.valData,
@@ -935,8 +931,9 @@ def main(args):
         )
 
     train(
+        gpu=gpu,
         worldSize=args.nodes,
-        rank=args.rank,
+        rank=RANK,
         numEpochs=args.numEpochs,
         lr=args.lr,
         configFile=args.config,
@@ -1359,7 +1356,7 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--rank",
-        help="Rank of this process within the cluster",
+        help="Rank of this node within the cluster",
         required=True,
         type=int,
     )
@@ -1376,10 +1373,13 @@ if __name__ == "__main__":
         required=False,
     )
 
+    parser.add_argument("--num_gpus", help="Number of gpus/node", default=4, type=int)
+
     args = parser.parse_args()
 
     if args.master is not None:
         os.environ["MASTER_ADDR"] = args.master
         os.environ["MASTER_PORT"] = args.port
 
-    main(args)
+    mp.spawn(main, nprocs=args.num_gpus, args=(args, ))
+
