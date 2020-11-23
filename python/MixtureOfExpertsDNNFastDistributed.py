@@ -22,6 +22,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
+RANK = float('inf')
+
 
 # For testing purposes (determinism)
 def deterministicBackEnd():
@@ -150,11 +152,11 @@ def initMetaToUniform(moe):
         lastLayer = _
 
     if hasattr(lastLayer, 'weight') and hasattr(lastLayer, 'bias'):
-        logging.info("Initializing meta-expert's final layer")
+        if RANK == 0: logging.info("Initializing meta-expert's final layer")
         lastLayer.weight.data.normal_(0.0, 1e-2)  # Small weights
         lastLayer.bias.data.fill_(0.33)  # Relatively larger biases
     else:
-        logging.info("Cannot initialize meta-expert since last layer doesn't have bias (or weight)")
+        if RANK == 0: logging.info("Cannot initialize meta-expert since last layer doesn't have bias (or weight)")
 
 
 def countParams(model):
@@ -279,7 +281,7 @@ class DataLoaderLocal:
         else:
             mapper = map
 
-        logging.info("Determining dataset length")
+        if RANK == 0: logging.info("Determining dataset length")
 
         if homSNVKeepRate < 1:
             self.homSNVKeepRate = homSNVKeepRate
@@ -289,14 +291,14 @@ class DataLoaderLocal:
             # Otherwise, compute it independently
             self._length = reduce(lambda a, b: a + b, mapper(determineLength, self.memmaplist)) // batchSize
 
-        logging.info("Number of batches = %d" % self._length)
+        if RANK == 0: logging.info("Number of batches = %d" % self._length)
 
         # self._computeWeightLabels()
         self.snvRelativeFrequency = None
         self.indelRelativeFrequency = None
 
     def _pruneSNVSites(self):
-        logging.info("Will prune some obviously homozygous sites (SNV sites with single allele at site)")
+        if RANK == 0: logging.info("Will prune some obviously homozygous sites (SNV sites with single allele at site)")
         args = [(memmapfile, self.homSNVKeepRate, True) for memmapfile in self.memmaplist]
         self.localeDictionary = dict()
         self._length = 0
@@ -313,9 +315,9 @@ class DataLoaderLocal:
             self._length += len(returns[1])
             numPruned += returns[2]
             if (i + 1) % 500 == 0:
-                logging.info("Completed pruning %d files" % (i + 1))
+                if RANK == 0: logging.info("Completed pruning %d files" % (i + 1))
 
-        logging.info("Pruned %d sites" % numPruned)
+        if RANK == 0: logging.info("Pruned %d sites" % numPruned)
         self._length = self._length // self.batchSize
 
     def _computeWeightLabels(self):
@@ -325,14 +327,14 @@ class DataLoaderLocal:
         else:
             mapper = map
 
-        logging.info("Determining label occurrence frequencies")
+        if RANK == 0: logging.info("Determining label occurrence frequencies")
         frequency = {'indels': np.array([0, 0]), 'snv': np.array([0, 0])}
 
         for i, r in enumerate(mapper(computeLabelOccurrence, self.memmaplist)):
             frequency['snv'] += r['snv']
             frequency['indels'] += r['indels']
             if (i + 1) % 500 == 0:
-                logging.info("Completed processing %d files" % (i + 1))
+                if RANK == 0: logging.info("Completed processing %d files" % (i + 1))
 
         self.snvLabelFrequency = frequency['snv']
         self.indelLabelFrequency = frequency['indels']
@@ -426,7 +428,7 @@ def dataLoader(
         tList, batchSize=batchSize, numWorkers=numWorkers, homSNVKeepRate=homSNVKeepRate, maxReadsPerSite=maxReadsPerSite
     )
 
-    logging.info("Compiled %d training examples and %d" % (len(tLoader) * batchSize)
+    if RANK == 0: logging.info("Compiled %d training examples" % (len(tLoader) * batchSize))
 
     return tLoader, None, len(tLoader) * batchSize, 0
 
@@ -509,27 +511,27 @@ def train(
     searcher = DDP(searcher, device_ids=[i for i in range(torch.cuda.device_count())])
 
     if onlyEval:
-        logging.info("Loading model for evaluation from path %s" % model)
+        if RANK == 0: logging.info("Loading model for evaluation from path %s" % model)
         searcher = torch.load(model).module
         if enableMultiGPU:
             searcher = torch.nn.DataParallel(searcher)
     elif model is not None:
-        logging.info("Loading initial parameters from model %s" % model)
+        if RANK == 0: logging.info("Loading initial parameters from model %s" % model)
         model_ = torch.load(model, map_location='cpu')
         searcher.load_state_dict(model_.state_dict())
 
     # If we are doing lr scan, then we start with minLr
     if rangeTest:
-        logging.info("For lr range test, initializing learning rate to minimum %0.10f" % minLr)
+        if RANK == 0: logging.info("For lr range test, initializing learning rate to minimum %0.10f" % minLr)
         lr = minLr
 
     if optimizer == "Adam":
-        logging.info("Using the Adam optimizer")
+        if RANK == 0: logging.info("Using the Adam optimizer")
         # Note: for warmup using Sine scheduling, learning rate starts at max lr. This is because
         # sine scheduler uses a phase-shifted version of the cosine scheduler
         optim = torch.optim.Adam(searcher.parameters(), lr=(lr if not warmup else maxLr))
     else:
-        logging.info("Using the SGD(R) optimizer")
+        if RANK == 0: logging.info("Using the SGD(R) optimizer")
 
         if (optimizer == "SGDR") or warmup:
             lr = maxLr
@@ -548,18 +550,18 @@ def train(
         )
 
         if usePredictionLossInVal:
-            logging.info("Using prediction loss in validation")
+            if RANK == 0: logging.info("Using prediction loss in validation")
             vLossFn = MixtureOfExpertsTools.PredictionLoss()
         elif useAccuracyInVal:
-            logging.info("Using accuracy in validation")
+            if RANK == 0: logging.info("Using accuracy in validation")
             vLossFn = MixtureOfExpertsTools.Accuracy()
         elif useSeparateValLoss:
-            logging.info("Using separate validation loss function")
+            if RANK == 0: logging.info("Using separate validation loss function")
             vLossFn = MixtureOfExpertsTools.MoELoss(
                 provideIndividualLoss=True
             )
         else:
-            logging.info("Reusing training loss in validation")
+            if RANK == 0: logging.info("Reusing training loss in validation")
             vLossFn = qLossFn
 
     if cuda:
@@ -592,7 +594,7 @@ def train(
         assert(CHECKPOINT_FREQ % len(devices) == 0), "Checkpoint frequency should be a multiple of number of devices in multi-GPU mode"
 
     if checkpoint is not None:
-        logging.info("Loading from checkpoint %s ... " % checkpoint)
+        if RANK == 0: logging.info("Loading from checkpoint %s ... " % checkpoint)
         logging.warning(
             "We only perform warm-starting through checkpointing - only model parameters are restored"
         )
@@ -601,7 +603,7 @@ def train(
 
     def performCheckpoint(epoch, batch, itertype, prevloss):
         if onlyEval:
-            logging.info("Not performing checkpoint since this is an eval-only run")
+            if RANK == 0: logging.info("Not performing checkpoint since this is an eval-only run")
             return
 
         seed = torch.get_rng_state()
@@ -624,12 +626,12 @@ def train(
             checkpoint['lr_scheduler_checkpoint'] = scheduler.state_dict()
 
         torch.save(checkpoint, outputPrefix + ".epoch%d.checkpoint" % epoch)
-        logging.info("Performed checkpointing; epoch: %d, batch: %d, itertype: %s" % (epoch, batch, itertype))
+        if RANK == 0: logging.info("Performed checkpointing; epoch: %d, batch: %d, itertype: %s" % (epoch, batch, itertype))
 
     numParams = countParams(searcher)
     trainIterNumber = 0
 
-    logging.info("Starting training of model with %d parameters" % numParams)
+    if RANK == 0: logging.info("Starting training of model with %d parameters" % numParams)
 
     assert(cuda), "This program only works with GPUs"
 
@@ -671,7 +673,7 @@ def train(
                         collectedBatches.append(next(loaderIter))
                         i_ += 1
                 except StopIteration:
-                    logging.info("Completed epoch")
+                    if RANK == 0: logging.info("Completed epoch")
                     # The last multi-batch (multi-GPU case) is discarded.
                     # Since shuffling is on, this isn't a problem
                     break
@@ -780,22 +782,22 @@ def train(
                 totalLoss += floss if (not binaryClassifier) else floss * labels.numel()
 
                 if i % TRAIN_MESSAGE_INTERVAL == 0:
-                    logging.info("Completed %d-th %s iteration, loss = %f" % (i, iterType, floss))
+                    if RANK == 0: logging.info("Completed %d-th %s iteration, loss = %f" % (i, iterType, floss))
 
                     if rangeTest:
                         lr = lr * rangeStep
 
                         if lr >= maxLr:
-                            logging.info("Completed lr range test data collection")
+                            if RANK == 0: logging.info("Completed lr range test data collection")
                             return
 
-                        logging.info("Increasing learning rate to %.10f" % lr)
+                        if RANK == 0: logging.info("Increasing learning rate to %.10f" % lr)
 
                         for param_group in optim.param_groups:
                             param_group['lr'] = lr
 
             if rangeTest:
-                logging.info("Terminating range test at the end of iteration")
+                if RANK == 0: logging.info("Terminating range test at the end of iteration")
                 return
 
             if not onlyEval:
@@ -816,22 +818,22 @@ def train(
             # If learning-rate warm-up is used, then delete the warmup scheduler
             # and recreate a scheduler based on lrFactor, or SGDR as necessary
             if warmup and (j == 0) and (iterType == "train"):
-                logging.info("LR-warmup was used. Deleting scheduler after the first epoch.")
+                if RANK == 0: logging.info("LR-warmup was used. Deleting scheduler after the first epoch.")
                 scheduler = None
 
                 # Note: we shouldn't have to touch base_lrs in the schedulers. This is because by the time
                 # epoch 0 training is over the optimizer is warmed up to its maximum learning rate
                 if lrScheduleFactor > 0:
-                    logging.info("LR scheduler to be instanciated in place of warmup")
+                    if RANK == 0: logging.info("LR scheduler to be instanciated in place of warmup")
                     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                         optim, factor=lrScheduleFactor, patience=0, cooldown=1, verbose=True, min_lr=minLr
                     )
                 elif optimizer == "SGDR":
-                    logging.info("Cosine annealing scheduler to be instanciated in place of warmup")
+                    if RANK == 0: logging.info("Cosine annealing scheduler to be instanciated in place of warmup")
                     scheduler = CosineAnnealingWarmRestarts(optim, T_0=T0, T_mult=Tmult, eta_min=minLr)
 
         if onlyEval:
-            logging.info("Completed validation, averge accuracy = %f" % (totalLoss / numLabels))
+            if RANK == 0: logging.info("Completed validation, averge accuracy = %f" % (totalLoss / numLabels))
             return
 
         # Reset itertype - this may have been loaded from a checkpoint
@@ -844,17 +846,24 @@ def train(
 
         if rank == 0:
             performCheckpoint(j, 0, "train", prevLoss)
-            logging.info("Saving model; total loss = %f" % totalLoss)
+            if RANK == 0: logging.info("Saving model; total loss = %f" % totalLoss)
             torch.save(searcher, os.path.abspath(outputPrefix + "%d.dnn" % j))
             numIterLossDecrease = 0
 
         dist.barrier()
 
-    logging.info("Completed all training iterations")
+    if RANK == 0: logging.info("Completed all training iterations")
 
 
 def main(args):
-    logging.basicConfig(level=(logging.INFO if not args.debug else logging.DEBUG), format='%(asctime)-15s %(message)s')
+    global RANK
+    RANK = args.rank
+
+    logging.basicConfig(
+        level=(logging.INFO if not args.debug else logging.DEBUG),
+        format='%(asctime)-15s %(message)s',
+        filename=args.output
+    )
 
     """ Initialize multi-node """
     dist.init_process_group(
@@ -870,7 +879,7 @@ def main(args):
     if args.lrRangeTest:
         assert(args.tensorLog is not None), "Provide tensorlog path for range test"
 
-    logging.info("Optimizer is %s" % args.optimizer)
+    if RANK == 0: logging.info("Optimizer is %s" % args.optimizer)
 
     torch.manual_seed(args.seed)
     random.seed(13)
@@ -909,7 +918,7 @@ def main(args):
         nTrain = len(dataloader[0])
         endOfEpochRate = 1e-12
         args.entropyDecay = determineDecayRate(args.entropyRegularizer, endOfEpochRate, nTrain)
-        logging.info(
+        if RANK == 0: logging.info(
             "Setting entropy decay rate to %f for %d iterations with starting entropy rate %f" % (
                 args.entropyDecay, nTrain, args.entropyRegularizer
             )
@@ -919,7 +928,7 @@ def main(args):
         nTrain = len(dataloader[0])
         endOfEpochRate = 1e-12
         args.individualityDecay = determineDecayRate(args.individuality, endOfEpochRate, nTrain)
-        logging.info(
+        if RANK == 0: logging.info(
             "Setting individuality decay rate to %f for %d iterations with starting individuality rate %f" % (
                 args.individualityDecay, nTrain, args.individuality
             )
@@ -1358,17 +1367,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--master",
         help="Name of the master node",
-        required=True,
+        required=False,
     )
 
     parser.add_argument(
         "--port",
         help="Port to use for communication on the master",
-        default="9314",
+        required=False,
     )
 
     args = parser.parse_args()
 
-    os.environ["MASTER_ADDR"] = args.master
-    os.environ["MASTER_PORT"] = args.port
+    if args.master is not None:
+        os.environ["MASTER_ADDR"] = args.master
+        os.environ["MASTER_PORT"] = args.port
+
     main(args)
