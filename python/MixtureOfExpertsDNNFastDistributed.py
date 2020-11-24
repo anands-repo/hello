@@ -529,6 +529,7 @@ def train(
     # print("Moving to gpu %d from rank %d" % (gpu, gpu), flush=True)
 
     devices = [torch.device("cuda:%d" % gpu)]
+    # devices = [gpu]
     numParams = countParams(searcher)
     searcher.to(devices[0])
     searcher.train(True)
@@ -884,7 +885,7 @@ def train(
 def main(gpu, args):
     global RANK
     global WORLD_SIZE
-    RANK = args.rank * args.num_gpus + gpu
+    RANK = args.rank + gpu
     WORLD_SIZE = args.nodes * args.num_gpus
 
     logging.basicConfig(
@@ -1049,9 +1050,9 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--batchSize",
+        "--batchSizePerNode",
         help="Batch size for training",
-        default=128,
+        default=512,
         type=int,
     )
 
@@ -1409,9 +1410,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    args.batchSize = args.batchSizePerNode // args.num_gpus
+
     if args.master is not None:
         os.environ["MASTER_ADDR"] = args.master
         os.environ["MASTER_PORT"] = args.port
 
     mp.spawn(main, nprocs=args.num_gpus, args=(args, ))
-
