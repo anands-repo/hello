@@ -232,6 +232,10 @@ def determineLength(filename):
         raise Exception
 
 
+def determineLengthList(filenames):
+    return sum(determineLength(f) for f in filenames)
+
+
 def computeLabelOccurrence(memmapfile):
     with open(memmapfile, 'rb') as fhandle:
         data = pickle.load(fhandle)
@@ -262,24 +266,12 @@ def pruneHomozygous(args):
 
 
 class DataLoaderLocal:
-    def __init__(self, memmaplist, worldSize, rank, batchSize=128, numWorkers=10, homSNVKeepRate=1, maxReadsPerSite=0):
-        """ Distribute files over each rank so it is disjointed """
-        total_num_files = len(memmaplist)
-        files_per_rank = math.ceil(total_num_files / worldSize)
-        start_index = rank * files_per_rank
-        end_index = min((rank + 1) * files_per_rank, total_num_files)
-        self.memmaplist = list(memmaplist[start_index: end_index])
-        """ Disjointed distribution over """
-
-        # print("start_index, end_index, and total size are %d, %d and %d respectively" % (start_index, end_index, total_num_files), flush=True)
-        # print("memmap list size for rank %d is %d" % (rank, len(self.memmaplist)), flush=True)
-
+    def __init__(self, memmaplist, batchSize=128, numWorkers=10, homSNVKeepRate=1, maxReadsPerSite=0):
+        self.memmaplist = list(memmaplist)
         random.shuffle(self.memmaplist)
         self.batchSize = batchSize
         self.numWorkers = numWorkers
         self.maxReadsPerSite = maxReadsPerSite
-        self.worldSize = worldSize
-        self.rank = rank
 
         # Determine length
         if numWorkers > 0:
@@ -303,6 +295,18 @@ class DataLoaderLocal:
         # self._computeWeightLabels()
         self.snvRelativeFrequency = None
         self.indelRelativeFrequency = None
+
+    @property
+    def max_length(self):
+        if hasattr(self, '_max_length'):
+            return self._max_length
+        else:
+            return self._length
+
+    @max_length.setter
+    def max_length(self, _m):
+        assert(_m <= self._length), "Max length should be <= length"
+        self._max_length = _m
 
     def _pruneSNVSites(self):
         if RANK == 0: logging.info("Will prune some obviously homozygous sites (SNV sites with single allele at site)")
@@ -369,14 +373,21 @@ class DataLoaderLocal:
             collate_fn=collate_function,
             num_workers=0,
             pin_memory=False,
-            drop_last=True,  # Drop the last batch of the data for single GPU deployments
+            drop_last=False,
         )
-        # print("After making actual dataloader in rank %d" % self.rank, flush=True)
 
-        # print("Before making actual iterator in rank %d" % self.rank, flush=True)
-        iterator = iter(loader)
-        # print("After making actual iterator in rank %d" % self.rank, flush=True)
-        return iterator
+        self.iterator = iter(loader)
+        self.count = 0
+        return self
+
+    def __next__(self):
+        if self.count >= self.max_length:
+            del self.iterator
+            del self.count
+            raise StopIteration
+
+        self.count += 1
+        return next(self.iterator)
 
     def state_dict(self):
         return {'memmaplist': self.memmaplist}
@@ -393,7 +404,7 @@ def dataLoader(
     batchSize,
     files,
     worldSize,
-    rank,
+    ranks,
     trainPct=0.9,
     overfit=False,
     pruneHomozygous=False,
@@ -416,8 +427,8 @@ def dataLoader(
     :param worldSize: int
         Size of the world
 
-    :param rank: int
-        Rank id of the process in the world
+    :param ranks: int
+        Ranks for which memmap data is desired
 
     :param trainPct: float
         Percentage of data used for train
@@ -434,23 +445,38 @@ def dataLoader(
     :return: tuple
         Two torch.utils.data.DataLoader objects for training and validation
     """
+    random.seed(13)
+
     memmaplist = [r.rstrip() for r in open(files, 'r').readlines()]
     random.shuffle(memmaplist)
 
-    tList = memmaplist
-    tLoader = DataLoaderLocal(
-        tList,
-        worldSize,
-        rank,
-        batchSize=batchSize,
-        numWorkers=0,
-        homSNVKeepRate=homSNVKeepRate,
-        maxReadsPerSite=maxReadsPerSite
-    )
+    print("Counting minimum epoch size of each rank")
 
-    if RANK == 0: logging.info("Compiled %d training examples" % (len(tLoader) * batchSize))
+    rank_size = math.ceil(len(memmaplist) / worldSize)
+    rank_splits = [
+        memmaplist[i * rank_size: (i + 1) * rank_size] for i in range(worldSize)
+    ]
 
-    return tLoader, None, len(tLoader) * batchSize, 0
+    workers = Pool(min(20, len(rank_splits)))
+    split_lengths = [i // batchSize for i in workers.map(determineLengthList, rank_splits)]
+    print("Split lengths are", split_lengths)
+    minimum_length = min(split_lengths)
+    print("Minimum epoch size is %d" % minimum_length)
+
+    loaders = []
+
+    for j in ranks:
+        tLoader = DataLoaderLocal(
+            memmaplist[j * rank_size: (j + 1) * rank_size],
+            batchSize=batchSize,
+            numWorkers=0,
+            homSNVKeepRate=homSNVKeepRate,
+            maxReadsPerSite=maxReadsPerSite
+        )
+        tLoader.max_length = minimum_length
+        loaders.append(tLoader)
+
+    return loaders
 
 
 @profile
@@ -500,7 +526,7 @@ def train(
     moeType="advanced",
 ):
     # moeType = "advanced"
-    tLoader, vLoader, lTrain, lVal = dataloader
+    tLoader = dataloader
     configDict = importlib.import_module(configFile).configDict
 
     if moeType == "advanced":
@@ -646,7 +672,6 @@ def train(
             'seed': seed,
             'prevloss': prevloss,
             'tLoaderState': tLoader.state_dict(),
-            'vLoaderState': vLoader.state_dict(),
             'randomState': random.getstate(),
             'numIterLossDecrease': numIterLossDecrease,
         }
@@ -671,6 +696,7 @@ def train(
 
         for iterType in itertypeList:
             totalLoss = 0
+            totalSize = 0
             totalQ = 0
             loader = tLoader if iterType == "train" else vLoader
 
@@ -810,6 +836,7 @@ def train(
                                 logWriter.add_scalar("lr_%d" % l, param_group['lr'], trainIterNumber)
 
                 totalLoss += floss if (not binaryClassifier) else floss * labels.numel()
+                totalSize += labels.numel()
 
                 if i % TRAIN_MESSAGE_INTERVAL == 0:
                     if RANK == 0: logging.info("Completed %d-th %s iteration, loss = %f" % (i, iterType, floss))
@@ -831,7 +858,7 @@ def train(
                 return
 
             if not onlyEval:
-                totalLoss /= lTrain if iterType == "train" else lVal
+                totalLoss /= totalSize
 
             if logWriter is not None and rank == 0:
                 if iterType == "train":
@@ -882,7 +909,7 @@ def train(
     if RANK == 0: logging.info("Completed all training iterations")
 
 
-def main(gpu, args):
+def main(gpu, args, dataloaders):
     global RANK
     global WORLD_SIZE
     RANK = args.rank + gpu
@@ -899,11 +926,12 @@ def main(gpu, args):
         backend='nccl', init_method='env://', world_size=WORLD_SIZE, rank=RANK
     )
 
-    if args.tensorLog is not None:
-        import torch.utils.tensorboard as tensorboard
-        logWriter = tensorboard.SummaryWriter(args.tensorLog)
-    else:
-        logWriter = None
+    if RANK == 0:
+        if args.tensorLog is not None:
+            import torch.utils.tensorboard as tensorboard
+            logWriter = tensorboard.SummaryWriter(args.tensorLog)
+        else:
+            logWriter = None
 
     if args.lrRangeTest:
         assert(args.tensorLog is not None), "Provide tensorlog path for range test"
@@ -922,18 +950,19 @@ def main(gpu, args):
 
     args.useAccuracyInVal = False
 
-    dataloader = dataLoader(
-        numWorkers=args.numWorkers,
-        batchSize=args.batchSize,
-        files=args.data,
-        worldSize=WORLD_SIZE,
-        rank=RANK,
-        overfit=args.overfit,
-        pruneHomozygous=args.pruneHomozygous,
-        valData=args.valData,
-        homSNVKeepRate=args.homSNVKeepRate,
-        maxReadsPerSite=args.maxReadsPerSite,
-    )
+    # dataloader = dataLoader(
+    #     numWorkers=args.numWorkers,
+    #     batchSize=args.batchSize,
+    #     files=args.data,
+    #     worldSize=WORLD_SIZE,
+    #     rank=RANK,
+    #     overfit=args.overfit,
+    #     pruneHomozygous=args.pruneHomozygous,
+    #     valData=args.valData,
+    #     homSNVKeepRate=args.homSNVKeepRate,
+    #     maxReadsPerSite=args.maxReadsPerSite,
+    # )
+    dataloader = dataloaders[gpu]
 
     def determineDecayRate(startRate, endRate, numSteps):
         # rate * (x ^ nTrain) = 1e-10 (e.g., if we want to decay to 1e-10 by end of epoch)
@@ -1416,4 +1445,13 @@ if __name__ == "__main__":
         os.environ["MASTER_ADDR"] = args.master
         os.environ["MASTER_PORT"] = args.port
 
-    mp.spawn(main, nprocs=args.num_gpus, args=(args, ))
+    dataloaders = dataLoader(
+        0,
+        args.batchSize,
+        args.data,
+        worldSize=args.nodes * args.num_gpus,
+        ranks=[args.rank + i for i in range(args.num_gpus)],
+        maxReadsPerSite=args.maxReadsPerSite,
+    )
+
+    mp.spawn(main, nprocs=args.num_gpus, args=(args, dataloaders))
