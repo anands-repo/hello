@@ -932,6 +932,8 @@ def main(gpu, args, dataloaders):
             logWriter = tensorboard.SummaryWriter(args.tensorLog)
         else:
             logWriter = None
+    else:
+        logWriter = None
 
     if args.lrRangeTest:
         assert(args.tensorLog is not None), "Provide tensorlog path for range test"
