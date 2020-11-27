@@ -653,7 +653,9 @@ def train(
         logging.warning(
             "We only perform warm-starting through checkpointing - only model parameters are restored"
         )
-        checkpoint = torch.load(checkpoint)
+        # Configure map_location as per: https://pytorch.org/tutorials/intermediate/ddp_tutorial.html
+        map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu}
+        checkpoint = torch.load(checkpoint, map_location=map_location)
         searcher.load_state_dict(checkpoint['model_checkpoint'])
 
     def performCheckpoint(epoch, batch, itertype, prevloss):
