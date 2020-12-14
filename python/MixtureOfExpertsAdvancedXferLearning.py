@@ -134,6 +134,7 @@ def build_on_top(
             return None
 
         if item1 is not None and item2 is not None:
+            # If both items are present, attach item2 to item1
             new_item = torch.nn.Sequential(
                 item1,
                 item2,
@@ -149,7 +150,13 @@ def build_on_top(
 
             return new_item
         else:
-            return None
+            if item1 is not None:
+                # If only the original model has a component, simply return that component
+                parameter_groups["orig_parameters%d" % parameter_group_counter] = item1
+                parameter_group_counter += 1
+                return item1
+            else:
+                return None
 
     new_args = dict()
     new_args["read_convolver0"] = attach_parameter_pair("read_convolver0", read_convolver0_addendum)
