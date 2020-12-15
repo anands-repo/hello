@@ -172,6 +172,12 @@ def build_on_top(
     new_args["meta"] = attach_parameter_pair("meta", meta_addendum)
     new_moe = MoEAttention(**new_args)
 
+    # Reenact patch as in create_moe_attention_model
+    if new_moe.xattn0 is None:
+        del new_moe.xattn0
+    if new_moe.xattn1 is None:
+        del new_moe.xattn1
+
     return new_moe, parameter_groups
 
 class MoEAttention(torch.nn.Module):
