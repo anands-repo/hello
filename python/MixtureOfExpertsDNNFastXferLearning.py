@@ -535,7 +535,7 @@ def train(
         for group in optim.param_groups:
             if group["type"] == "old":
                 group["lr"] = lr_old
-            elif group["type"] = "new":
+            elif group["type"] == "new":
                 group["lr"] = lr_new
 
     def create_optimizer(lr_old, lr_new):
