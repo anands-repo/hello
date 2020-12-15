@@ -529,6 +529,15 @@ def train(
 
     assert(optimizer == "Adam"), "Only Adam optimizer is supported"
 
+    def update_optimizer(lr_old, lr_new, optim):
+        logging.info("Updating parameter groups")
+
+        for group in optim.param_groups:
+            if group["type"] == "old":
+                group["lr"] = lr_old
+            elif group["type"] = "new":
+                group["lr"] = lr_new
+
     def create_optimizer(lr_old, lr_new):
         logging.info("Creating optimizer with learning rates: %f, %f" % (lr_old, lr_new))
         train_parameter_groups = []
@@ -538,13 +547,12 @@ def train(
             new_key = "new_parameters"
 
             if param_key[:len(orig_key)] == orig_key:
-                if lr_old > 0:
-                    train_parameter_groups.append(
-                        {"params": parameter_groups[param_key].parameters(), "lr": lr_old}
-                    )
+                train_parameter_groups.append(
+                    {"params": parameter_groups[param_key].parameters(), "lr": lr_old, "type": "old"}
+                )
             elif param_key[:len(new_key)] == new_key:
                 train_parameter_groups.append(
-                    {"params": parameter_groups[param_key].parameters(), "lr": lr_new}
+                    {"params": parameter_groups[param_key].parameters(), "lr": lr_new, "type": "new"}
                 )
             else:
                 raise ValueError("Unknown parameter group!")
@@ -923,7 +931,7 @@ def train(
 
         # Create a second optimizer after the first epoch
         if j == 0:
-            optim = create_optimizer(lr_second_epoch_old, lr_second_epoch_new)
+            update_optimizer(lr_old=lr_second_epoch_old, lr_new=lr_second_epoch_new, optim=optim)
 
         # learning-rate schedule (this is after the validation iteration)
         # For SGDR, the update happens every batch, so its not done here
