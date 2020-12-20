@@ -425,7 +425,7 @@ if __name__ == "__main__":
     )
 
     caller_command = os.path.join(
-        path, "caller.py"
+        path, "caller_calling.py"
     )
 
     prepare_vcf_script = os.path.join(
