@@ -53,3 +53,14 @@ python hello_dev/python/call.py \
 The output VCF file may be found in `$workdir/results.mean.vcf`.
 
 A preliminary version of our draft is currently available at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1, however we plan to update this shortly with substantial new information.
+
+Errata: Currently, the VCF output by the tool has a syntax error with the INFO field. This may be fixed with the following code
+```
+fix_vcf() {
+    correct_string="##INFO=<ID=MixtureOfExpertPrediction,Type=String,Number=1,Description=\"Mean predictions from experts\">"
+    cat $1 | sed "s?##INFO=<ID=MixtureOfExpertPrediction,Description=\"Mean predictions from experts\"?$correct_string?g" > $2
+}
+
+fix_vcf $workdir/results.mean.vcf $workdir/results.mean.corrected.vcf
+```
+
