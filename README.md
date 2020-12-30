@@ -44,8 +44,10 @@ python hello_dev/python/call.py \
     --pbam $pbam \
     --ref $ref \
     --network models/no_ensemble_multi_coverage_mapq_threshold_hg002_continued17.wrapper.dnn \
-    --num_threads 30 \
+    --num_threads $NUM_THREADS \
     --workdir $workdir \
     --mapq_threshold 5 \
     --reconcilement_size 0
 ```
+
+A preliminary version of our draft is currently available at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1, however we plan to update this shortly with substantial new information.
