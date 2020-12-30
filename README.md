@@ -50,4 +50,6 @@ python hello_dev/python/call.py \
     --reconcilement_size 0
 ```
 
+The output VCF file may be found in `$workdir/results.mean.vcf`.
+
 A preliminary version of our draft is currently available at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1, however we plan to update this shortly with substantial new information.
