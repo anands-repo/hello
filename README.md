@@ -39,7 +39,7 @@ python python/call.py \
 To run hybrid Illumina-PacBio variant calling, please use the following command
 
 ```
-python hello_dev/python/call.py \
+python python/call.py \
     --ibam $ibam \
     --pbam $pbam \
     --ref $ref \
