@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 """
 New hotspot detection method that uses the C++ AlleleSearcher class
 """

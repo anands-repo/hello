@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 """
 Classes for generating and manipulating training data for the new AlleleSearcher DNN
 """

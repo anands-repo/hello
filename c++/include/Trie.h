@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #ifndef _TRIE_H_
 #define _TRIE_H_
 #include <vector>

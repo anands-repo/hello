@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #ifndef _ARRAYS_H_
 #define _ARRAYS_H_
 #include <cstdlib>

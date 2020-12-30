@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 """
 Prepare a VCF file from a set of features in the current directory
 """

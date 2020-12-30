@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #include "Read.h"
 
 void Read::_get_read_mapping() {

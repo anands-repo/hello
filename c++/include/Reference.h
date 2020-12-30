@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #ifndef _REFERENCE_H_
 #define _REFERENCE_H_
 

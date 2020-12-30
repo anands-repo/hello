@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 import torch
 from PileupContainerLite import PileupContainerLite as PileupContainer
 from ReferenceCache import ReferenceCache

@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #ifndef UTILS_H_INCLUDED
 #define UTILS_H_INCLUDED
 #include <vector>

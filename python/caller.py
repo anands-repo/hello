@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 """
 Analyze variants directly from Pileup data
 """

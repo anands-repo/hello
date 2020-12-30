@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #include "AlleleSearcherLiteFiltered.h"
 #include "leftAlignCigars.h"
 #include "Arrays.h"

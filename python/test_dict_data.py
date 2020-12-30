@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 import h5py
 import MemmapDataLite
 import _pickle as pickle

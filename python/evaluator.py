@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 from more_itertools import peekable
 import vcf
 import ast

@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #ifndef ALLELE_SEARCHER_LITE_FILTERED_H
 #define ALLELE_SEARCHER_LITE_FILTERED_H
 #include <vector>

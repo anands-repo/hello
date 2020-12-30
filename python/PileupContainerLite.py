@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 """
 This file presents a light version of PileupContainer that doesn't collect reads column-by-column
 """

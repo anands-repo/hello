@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 # configDict = {
 #     "read_conv0": "architectures.read_convolver",
 #     "compressor0": "architectures.compressor_conv_small",

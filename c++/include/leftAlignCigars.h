@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #ifndef _LEFT_ALIGN_CIGARS_
 #define _LEFT_ALIGN_CIGARS_
 

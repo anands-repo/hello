@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 """
 This file contains experimental code for a prefix-DNN to the DNNs in AlleleSearcherDNN. The prefix DNN performs
 convolutions on input read features. These features are then combined using a simple summation. The use of a DNN

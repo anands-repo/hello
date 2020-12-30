@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #ifndef _READ_H_
 #define _READ_H_
 #include <vector>

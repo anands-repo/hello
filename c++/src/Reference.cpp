@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #include "Reference.h"
 
 Reference::Reference(const string& refString, size_t start) : refString(refString), leftPosition(start)

@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 import os
 from argparse import ArgumentParser
 from ReferenceCache import ReferenceCache

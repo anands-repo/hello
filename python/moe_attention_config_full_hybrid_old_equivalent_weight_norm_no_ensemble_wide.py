@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 import architectures.read_convolver_wide as rc
 import architectures.compressor_conv_small_wide as cc
 import architectures.xattn_subtract_wide as xs

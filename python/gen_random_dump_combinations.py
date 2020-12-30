@@ -1,3 +1,4 @@
+# © 2019 University of Illinois Board of Trustees.  All rights reserved
 """
 Script generates random combinations for the dump command for a set of reads
 """
