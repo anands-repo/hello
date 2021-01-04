@@ -1,4 +1,4 @@
-# HELLO: Haplotype Elucidation through neural-network supported Log Likelihood Optimization
+# HELLO: A DNN-based small variant caller
 
 The repository contains files for HELLO - a small variant caller that is designed for running standalone and hybrid small variant calling.
 
