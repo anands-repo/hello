@@ -6,4 +6,6 @@ no_ensemble_multi_coverage_mapq_threshold_hg002_continued17.wrapper.dnn: HELLO H
 
 pacbio_multi_coverage_mapq_threshold_hg00216.wrapper.dnn: HELLO Pacbio model trained on 8x - 52x coverage PacBio data
 
+pacbio_multi_coverage_mapq_threshold_hg002_with_hp_tags_separate_train_val_2021_04_30_201011.dp_model.wrapper.dnn: HELLO PacBio haplotagged model trained on 8x - 52x coverage PacBio data
+
 DeepVariant models are available at https://drive.google.com/drive/folders/1eDm5Dja4CVFL_JJ8YUAn0vydj7Lohkwf?usp=sharing
