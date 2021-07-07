@@ -15,6 +15,8 @@ cmake .
 make -j 12
 ```
 
+NOTE: To properly download models, git-lfs needs to be installed. Once installed, please do `git-lfs` inside the git repo.
+
 To run Illumina variant calling, please use the following command
 
 ```
