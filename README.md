@@ -4,11 +4,11 @@ HELLO is a Deep Neural Network-based small variant caller that can call variants
 
 # Information regarding HELLO's methodology
 
-The current version of HELLO is described in our publication at BMC Bioinformatics: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-021-04311-4
+The methodologies used in the current version of HELLO are described in our publication at BMC Bioinformatics: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-021-04311-4
 
-An old version of HELLO, with only support for hybrid variant calling, is described at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1.
+Older methodologies used in a prior version of HELLO, with only support for hybrid variant calling, is described at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1.
 
-The models released in this package do not follow this older description in bioRxiv, but follow the description in the paper published at BMC Bioinformatics.
+The models released in this package (including models for hybrid variant calling) do not follow methodologies described in the bioRxiv article, but follow the methodologies described in the paper published at BMC Bioinformatics, which are significantly different from the bioRxiv version.
 
 # Information regarding HELLO's code and usage
 
