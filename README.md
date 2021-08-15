@@ -1,5 +1,7 @@
 # HELLO: A DNN-based small variant caller
 
+HELLO is a Deep Neural Network-based small variant caller that can call variants for Illumina, PacBio, and hybrid Illumina-PacBio settings. HELLO uses customized Deep Neural Networks which provide accurate variant calls with relatively small model size.
+
 # Information regarding HELLO's methodology
 
 The current version of HELLO is described in our publication at BMC Bioinformatics: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-021-04311-4
