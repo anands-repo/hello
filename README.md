@@ -10,7 +10,7 @@ An old version of HELLO, with only support for hybrid variant calling, is descri
 
 The models released in this package do not follow this older description in bioRxiv, but follow the description in the paper published at BMC Bioinformatics.
 
-# Information regarding HELLO code
+# Information regarding HELLO's code and usage
 
 (NEW) PacBio haplotagged model is available in models directory. The source code for running the model is in hello_dev.tar.gz, pending merge.
 
