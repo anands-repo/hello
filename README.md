@@ -1,6 +1,14 @@
 # HELLO: A DNN-based small variant caller
 
-Published at: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-021-04311-4
+# Information regarding HELLO's methodology
+
+The current version of HELLO is described in our publication at BMC Bioinformatics: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-021-04311-4
+
+An old version of HELLO, with only support for hybrid variant calling, is described at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1.
+
+The models released in this package do not follow this older description in bioRxiv, but follow the description in the paper published at BMC Bioinformatics.
+
+# Information regarding HELLO code
 
 (NEW) PacBio haplotagged model is available in models directory. The source code for running the model is in hello_dev.tar.gz, pending merge.
 
@@ -57,8 +65,6 @@ python python/call.py \
 ```
 
 The output VCF file may be found in `$workdir/results.mean.vcf`.
-
-An old version of HELLO is described at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1.
 
 Errata: Currently, the VCF output by the tool has a syntax error with the INFO field. This may be fixed with the following code
 ```
