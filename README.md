@@ -41,7 +41,7 @@ python python/call.py \
 ```
 
 
-To run PacBio variant calling, please use the following command
+To run PacBio variant calling, please use the following command (`--include_hp` to be added for haplotagged PacBio reads).
 
 ```
 python python/call.py \
