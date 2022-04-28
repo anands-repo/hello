@@ -26,7 +26,7 @@ torch.set_num_threads(1)
 random.seed(13)
 np.random.seed(13)
 # torch.set_num_threads isn't working in multiprocessing
-os.environ["OMP_NUM_THREADS"] = 1
+os.environ["OMP_NUM_THREADS"] = "1"
 
 
 def get_bam_string(bam):
