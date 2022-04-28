@@ -16,8 +16,14 @@ import tqdm
 import libCallability
 import pysam
 import prepareVcf
+import torch
+import numpy as np
+import random
 
 libCallability.initLogging(False)
+torch.set_num_threads(1)
+random.seed(13)
+np.random.seed(13)
 
 
 def get_bam_string(bam):

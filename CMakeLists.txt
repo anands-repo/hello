@@ -2,9 +2,9 @@ cmake_minimum_required(VERSION 3.12)
 project(libCallability.so)
 
 #### Correct these paths (platform specific) ####
-#set(BOOST /opt/boost/1.68.0)   # Set boost if non-standard installation path
-#include_directories(${BOOST}/include)   # Include boost directory if not standard installation path
-set(PYTHON_INC /root/miniconda3/include/python3.7m)
+set(BOOST /opt/boost)   # Set boost if non-standard installation path
+include_directories(${BOOST}/include)   # Include boost directory if not standard installation path
+set(PYTHON_INC /opt/miniconda3/include/python3.7m)
 #################################################
 
 include_directories(${PYTHON_INC})
