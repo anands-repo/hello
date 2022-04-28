@@ -189,7 +189,7 @@ def headerString(ref, chromosomes, info):
         ref.chrom = chromosome;
         length = len(ref);
         string += "##contig=<ID=%s,length=%d>\n" %(chromosome, length);
-    string += '##INFO=<ID=HELLO,Description="Obtained from mixture-of-experts">\n';
+    string += '##INFO=<ID=HELLO,Number=1,Type=String,Description="Obtained from HELLO variant caller">\n';
     string += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n';
     string += '##FILTER=<ID=FAIL,Description="Failed call">\n';
     string += "#" + '\t'.join("CHROM  POS     ID      REF     ALT     QUAL    FILTER  INFO    FORMAT  SAMPLE1".split()) + '\n';
