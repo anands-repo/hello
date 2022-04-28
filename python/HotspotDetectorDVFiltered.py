@@ -17,9 +17,9 @@ CHUNK_SIZE_ILLUMINA = 400
 CHUNK_SIZE_PACBIO = 10000
 MAX_NUM_READS_ILLUMINA = 10000
 MAX_NUM_READS_PACBIO = 1000
-HYBRID_HOTSPOT = False
-MIN_MAPQ = 10
-Q_THRESHOLD = 10
+_DEFAULT_HYBRID_HOTSPOT = False
+_DEFAULT_MIN_MAPQ = 10
+_DEFAULT_Q_THRESHOLD = 10
 
 try:
     profile
@@ -29,7 +29,18 @@ except Exception:
 
 
 @profile
-def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
+def doOneChunk(
+    chromosome,
+    begin,
+    end,
+    positions,
+    readFactory,
+    cache,
+    pacbio=False,
+    q_threshold=_DEFAULT_Q_THRESHOLD,
+    min_mapq=_DEFAULT_MIN_MAPQ,
+    hybrid_hotspot=_DEFAULT_HYBRID_HOTSPOT,
+):
     """
     Perform hotspot detection for a single chunk
 
@@ -49,8 +60,20 @@ def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
     :param readFactory: list/str
         Read factory or list of read factories in case of hybrid mode
 
+    :param cache: PySamFastaWrapper
+        Reference reader
+
     :param pacbio: bool
         Whether the reads are pacbio reads
+
+    :param q_threshold: int
+        Quality score cutoff
+
+    :param min_mapq: int
+        Minimum mapping quality
+
+    :param hybrid_hotspot: bool
+        Whether to use hybrid_hotspot or not
     """
     if type(readFactory) is list:
         container = [
@@ -67,12 +90,12 @@ def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
     try:
         searcher = AlleleSearcherLite(
             container, begin, end, cache, strict=False, pacbio=pacbio,
-            hybrid_hotspot=HYBRID_HOTSPOT, q_threshold=Q_THRESHOLD, mapq_threshold=MIN_MAPQ
+            hybrid_hotspot=hybrid_hotspot, q_threshold=q_threshold, mapq_threshold=min_mapq,
         )
 
         if hasattr(searcher, 'searcher'):
-            assert(searcher.searcher.check_q_threshold(Q_THRESHOLD)), "Q threshold not set correctly"
-            assert(searcher.searcher.check_mapq_threshold(MIN_MAPQ)), "MAPQ threshold not set correctly"
+            assert(searcher.searcher.check_q_threshold(q_threshold)), "Q threshold not set correctly"
+            assert(searcher.searcher.check_mapq_threshold(min_mapq)), "MAPQ threshold not set correctly"
 
     except LocationOutOfBounds:
         logging.warning("Out of bounds locations found for chunk %s, %d, %d" % (chromosome, begin, end))
@@ -85,11 +108,15 @@ def doOneChunk(chromosome, begin, end, positions, readFactory, pacbio=False):
 
 def hotspotGeneratorSingle(
     readFactory,
+    cache,
     chromosome,
     start,
     stop,
     chunkSize,
     pacbio=False,
+    q_threshold=_DEFAULT_Q_THRESHOLD,
+    min_mapq=_DEFAULT_MIN_MAPQ,
+    hybrid_hotspot=_DEFAULT_HYBRID_HOTSPOT,
 ):
     numChunks = math.ceil((stop - start) / chunkSize)
     positions = collections.OrderedDict()
@@ -97,7 +124,18 @@ def hotspotGeneratorSingle(
     for i in range(numChunks):
         begin_ = start + chunkSize * i
         end_ = min(begin_ + chunkSize, stop)
-        doOneChunk(chromosome, begin_, end_, positions, readFactory, pacbio=pacbio)
+        doOneChunk(
+            chromosome,
+            begin_,
+            end_,
+            positions,
+            readFactory,
+            cache,
+            pacbio=pacbio,
+            q_threshold=q_threshold,
+            min_mapq=min_mapq,
+            hybrid_hotspot=hybrid_hotspot,
+        )
 
     sortedPositions = sorted(list(positions.keys()))
 
@@ -108,11 +146,15 @@ def hotspotGeneratorSingle(
 def hotspotGeneratorHybrid(
     readFactory0,
     readFactory1,
+    cache,
     chromosome,
     start,
     stop,
     chunkSize0,
     chunkSize1,
+    q_threshold=_DEFAULT_Q_THRESHOLD,
+    min_mapq=_DEFAULT_MIN_MAPQ,
+    hybrid_hotspot=_DEFAULT_HYBRID_HOTSPOT,
 ):
     numChunks = math.ceil((stop - start) / chunkSize1)
     positions = collections.OrderedDict()
@@ -121,12 +163,112 @@ def hotspotGeneratorHybrid(
     for i in range(numChunks):
         begin_ = start + chunkSize1 * i
         end_ = min(begin_ + chunkSize1, stop)
-        doOneChunk(chromosome, begin_, end_, positions, [readFactory0, readFactory1],  pacbio=False)
+        doOneChunk(
+            chromosome,
+            begin_,
+            end_,
+            positions,
+            [readFactory0, readFactory1],
+            cache,
+            pacbio=False,
+            q_threshold=q_threshold,
+            min_mapq=min_mapq,
+            hybrid_hotspot=hybrid_hotspot,
+        )
 
     sortedPositions = sorted(list(positions.keys()))
 
     for p in sortedPositions:
         yield p
+
+
+def main(args):
+    logging.info("Started script")
+
+    cache = PySamFastaWrapper(args.ref)
+
+    if len(args.region.split(",")) == 1:
+        chromosome = args.region
+        cache.chrom = chromosome
+        start = 0
+        stop = len(cache)
+    else:
+        chromosome, start, stop = args.region.split(",")
+        start = int(start)
+        stop = int(stop)
+
+    bams = args.bam.split(",")
+
+    if len(bams) > 1:
+        args.bam, args.bam2 = bams
+        args.bam = PileupDataTools.ReadSampler(
+            args.bam,
+            MAX_NUM_READS_ILLUMINA,
+            chrPrefix="",
+            pacbio=False,
+            noClip=True,
+            prorateReadsToRetain=False,
+        )
+        args.bam2 = PileupDataTools.ReadSampler(
+            args.bam2,
+            MAX_NUM_READS_PACBIO,
+            chrPrefix="",
+            pacbio=True,
+            noClip=True,
+            prorateReadsToRetain=False,
+        )
+    else:
+        args.bam = bams[0]
+        args.bam2 = None
+        args.bam = PileupDataTools.ReadSampler(
+            args.bam,
+            MAX_NUM_READS_ILLUMINA if not args.pacbio else MAX_NUM_READS_PACBIO,
+            chrPrefix="",
+            pacbio=args.pacbio,
+            noClip=True,
+            prorateReadsToRetain=False,
+        )
+
+    if args.bam2 is None:
+        iterator = hotspotGeneratorSingle(
+            args.bam,
+            cache,
+            chromosome,
+            start,
+            stop,
+            CHUNK_SIZE_PACBIO if args.pacbio else CHUNK_SIZE_ILLUMINA,
+            pacbio=args.pacbio,
+            q_threshold=args.q_threshold,
+            min_mapq=args.mapq_threshold,
+            hybrid_hotspot=args.hybrid_hotspot,
+        )
+    else:
+        iterator = hotspotGeneratorHybrid(
+            args.bam,
+            args.bam2,
+            cache,
+            chromosome,
+            start,
+            stop,
+            CHUNK_SIZE_ILLUMINA,
+            CHUNK_SIZE_PACBIO,
+            q_threshold=args.q_threshold,
+            min_mapq=args.mapq_threshold,
+            hybrid_hotspot=args.hybrid_hotspot,
+        )
+
+    with open(args.output, 'w') as ohandle:
+        for i, item in enumerate(iterator):
+            ohandle.write(
+                str({'chromosome': chromosome, 'position': item}) + '\n'
+            )
+
+            if (i + 1) % 100 == 0:
+                logging.info("Completed %d chunks" % (i + 1))
+
+    logging.info("Completed running the script")
+
+    return args.output
 
 
 if __name__ == "__main__":
@@ -180,114 +322,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--q_threshold",
         help="Quality score threshold",
-        default=10,
+        default=_DEFAULT_Q_THRESHOLD,
         type=int        
     )
 
     parser.add_argument(
         "--mapq_threshold",
         help="Mapping quality threshold",
-        default=10,
+        default=_DEFAULT_MIN_MAPQ,
         type=int,
     )
 
-    cache = None
+    args = parser.parse_args()
 
-    @profile
-    def main():
-        global cache
-        global HYBRID_HOTSPOT
-        global MIN_MAPQ
-        global Q_THRESHOLD
-        args = parser.parse_args()
+    logging.basicConfig(
+        level=(logging.INFO if not args.debug else logging.DEBUG),
+        format='%(asctime)-15s %(message)s')
+    libCallability.initLogging(args.debug)
 
-        MIN_MAPQ = args.mapq_threshold
-        Q_THRESHOLD = args.q_threshold
-
-        if args.hybrid_hotspot:
-            HYBRID_HOTSPOT = True
-
-        # logging.basicConfig(level=(logging.DEBUG if args.debug else logging.INFO), format='%(asctime)-15s %(message)s')
-        logging.basicConfig(level=(logging.INFO if not args.debug else logging.DEBUG), format='%(asctime)-15s %(message)s')
-        libCallability.initLogging(args.debug)
-
-        logging.info("Started script")
-
-        # cache = ReferenceCache(database=args.ref)
-        cache = PySamFastaWrapper(args.ref)
-
-        if len(args.region.split(",")) == 1:
-            chromosome = args.region
-            cache.chrom = chromosome
-            start = 0
-            stop = len(cache)
-        else:
-            chromosome, start, stop = args.region.split(",")
-            start = int(start)
-            stop = int(stop)
-
-        bams = args.bam.split(",")
-
-        # Setup searcher factories
-        if len(bams) > 1:
-            args.bam, args.bam2 = bams
-            args.bam = PileupDataTools.ReadSampler(
-                args.bam,
-                MAX_NUM_READS_ILLUMINA,
-                chrPrefix="",
-                pacbio=False,
-                noClip=True,
-                prorateReadsToRetain=False,
-            )
-            args.bam2 = PileupDataTools.ReadSampler(
-                args.bam2,
-                MAX_NUM_READS_PACBIO,
-                chrPrefix="",
-                pacbio=True,
-                noClip=True,
-                prorateReadsToRetain=False,
-            )
-        else:
-            args.bam = bams[0]
-            args.bam2 = None
-            args.bam = PileupDataTools.ReadSampler(
-                args.bam,
-                MAX_NUM_READS_ILLUMINA if not args.pacbio else MAX_NUM_READS_PACBIO,
-                chrPrefix="",
-                pacbio=args.pacbio,
-                noClip=True,
-                prorateReadsToRetain=False,
-            )
-
-        if args.bam2 is None:
-            iterator = hotspotGeneratorSingle(
-                args.bam,
-                chromosome,
-                start,
-                stop,
-                CHUNK_SIZE_PACBIO if args.pacbio else CHUNK_SIZE_ILLUMINA,
-                pacbio=args.pacbio,
-            )
-        else:
-            iterator = hotspotGeneratorHybrid(
-                args.bam,
-                args.bam2,
-                chromosome,
-                start,
-                stop,
-                CHUNK_SIZE_ILLUMINA,
-                CHUNK_SIZE_PACBIO,
-            )
-
-        with open(args.output, 'w') as ohandle:
-            for i, item in enumerate(iterator):
-                ohandle.write(
-                    str({'chromosome': chromosome, 'position': item}) + '\n'
-                )
-
-                if (i + 1) % 100 == 0:
-                    logging.info("Completed %d chunks" % (i + 1))
-
-        logging.info("Completed running the script")
-
-    main()
+    main(args)

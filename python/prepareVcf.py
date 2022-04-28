@@ -14,18 +14,20 @@ import math
 import shutil
 import numpy as np
 import sys
+import tqdm
+import logging
 
 
 def checkLogs(path):
     shardFiles = glob.glob("%s/shard[0-9]*.txt" % path);
-    print("Found %d input shard files" % len(shardFiles));
+    logging.info("Found %d input shard files" % len(shardFiles));
 
     # For each shard file check whether the log file has the appropriate string
     for shard in shardFiles:
         logName = shard + ".log";
         with open(logName, 'r') as fhandle:
             if "Completed running the script" not in fhandle.read():
-                print("File %s doesn't have termination string" % logName);
+                logging.info("File %s doesn't have termination string" % logName);
                 return False;
 
     return True;
@@ -96,7 +98,7 @@ def callAlleles(likelihoodDict, chromosome, start, length, ref):
         [refAllele],
         [altAlleles],
         [genotypes],
-        string="MixtureOfExpertPrediction",
+        string="HELLO",
         qual=quality
     )[0];
 
@@ -187,12 +189,74 @@ def headerString(ref, chromosomes, info):
         ref.chrom = chromosome;
         length = len(ref);
         string += "##contig=<ID=%s,length=%d>\n" %(chromosome, length);
-    # string += '##INFO=<ID=MixtureOfExpertsPrediction,Description="Obtained from mixture-of-experts">\n';
-    string += info + '\n';
+    string += '##INFO=<ID=HELLO,Description="Obtained from mixture-of-experts">\n';
     string += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n';
     string += '##FILTER=<ID=FAIL,Description="Failed call">\n';
     string += "#" + '\t'.join("CHROM  POS     ID      REF     ALT     QUAL    FILTER  INFO    FORMAT  SAMPLE1".split()) + '\n';
     return string;
+
+
+def main(args):
+    allResults = glob.glob("%s*.features" % args.prefix);
+
+    if args.checkRuns:
+        path = os.path.split(args.prefix)[0];
+        logging.info("Checking logs in path %s" % path);
+        if checkLogs(path):
+            logging.info("All runs have completed");
+        else:
+            logging.error("Some runs weren't completed. Stopping ... ");
+            sys.exit(-1);
+
+    if os.path.exists(args.tmpdir):
+        shutil.rmtree(args.tmpdir);
+
+    os.makedirs(args.tmpdir);
+
+    # First create sub-vcf files
+    mapper = Pool(args.numThreads).imap_unordered;
+
+    callArgs = [
+        (result, args.ref, args.tmpdir)
+        for result in allResults
+    ];
+
+    chromosomes = set();
+
+    for i, chr_ in enumerate(tqdm.tqdm(mapper(vcfWrapper, callArgs), desc="VCF prep")):
+        chromosomes = chromosomes.union(chr_);
+
+    def combineVcfs(suffix, info, label):
+        searchString = os.path.join(args.tmpdir, suffix);
+        allFiles = glob.glob(searchString);
+        header = headerString(
+            args.ref,
+            chromosomes,
+            info='##INFO=<ID=%s,Description="%s">' % (info[0], info[1])
+        );
+        tempvcf = args.outputPrefix + ".%s.tmp.vcf" % label;
+        finalvcf = args.outputPrefix + ".%s.vcf" % label;
+        with open(tempvcf, 'w') as fhandle:
+            fhandle.write(header);
+            for f in allFiles:
+                contents = open(f, 'r').read().rstrip();
+                if len(contents) > 0:
+                    fhandle.write(contents + '\n');
+        with open(finalvcf, 'w') as fhandle:
+            command = ["vcf-sort", tempvcf];
+            logging.info("Running command %s" % str(command));
+            subprocess.call(
+                command, stdout=fhandle
+            );
+        os.remove(tempvcf);
+        return finalvcf
+
+    # Create VCF headers and combine sub-vcf files
+    return combineVcfs(
+        "*mean.vcf",
+        ("HELLO", "Predictions from the tool HELLO"),
+        label="output"
+    );
 
 
 if __name__ == "__main__":
@@ -239,107 +303,5 @@ if __name__ == "__main__":
     );
 
     args = parser.parse_args();
-
-    allResults = glob.glob("%s*.features" % args.prefix);
-
-    if args.checkRuns:
-        path = os.path.split(args.prefix)[0];
-        print("Checking logs in path %s" % path);
-        if checkLogs(path):
-            print("All runs have completed");
-        else:
-            print("Some runs weren't completed. Stopping ... ");
-            sys.exit(-1);
-
-    if os.path.exists(args.tmpdir):
-        shutil.rmtree(args.tmpdir);
-
-    os.makedirs(args.tmpdir);
-
-    # First create sub-vcf files
-    mapper = Pool(args.numThreads).imap_unordered;
-
-    callArgs = [
-        (result, args.ref, args.tmpdir)
-        for result in allResults
-    ];
-
-    chromosomes = set();
-
-    for i, chr_ in enumerate(mapper(vcfWrapper, callArgs)):
-        chromosomes = chromosomes.union(chr_);
-        if (i + 1) % 100 == 0:
-            print("Completed processing %d files" % (i + 1));
-
-    def combineVcfs(suffix, info, label):
-        searchString = os.path.join(args.tmpdir, suffix);
-        print("Search string %s" % searchString);
-        allFiles = glob.glob(searchString);
-        print("Found %d files" % len(allFiles));
-        header = headerString(
-            args.ref,
-            chromosomes,
-            info='##INFO=<ID=%s,Description="%s"' % (info[0], info[1])
-        );
-        tempvcf = args.outputPrefix + ".%s.tmp.vcf" % label;
-        finalvcf = args.outputPrefix + ".%s.vcf" % label;
-        with open(tempvcf, 'w') as fhandle:
-            fhandle.write(header);
-            for f in allFiles:
-                contents = open(f, 'r').read().rstrip();
-                if len(contents) > 0:
-                    fhandle.write(contents + '\n');
-        with open(finalvcf, 'w') as fhandle:
-            command = ["vcf-sort", tempvcf];
-            print("Running command %s" % str(command));
-            subprocess.call(
-                command, stdout=fhandle
-            );
-        os.remove(tempvcf);
-
-    # Create VCF headers and combine sub-vcf files
-    combineVcfs(
-        "*expert0.vcf",
-        ("MixtureOfExpertPrediction", "Prediction from NGS expert"),
-        label="ngs"
-    );
-
-    combineVcfs(
-        "*expert1.vcf",
-        ("MixtureOfExpertPrediction", "Prediction from TGS expert"),
-        label="tgs"
-    );
-
-    combineVcfs(
-        "*expert2.vcf",
-        ("MixtureOfExpertPrediction", "Prediction from NGS_TGS expert"),
-        label="ngs_tgs"
-    );
-
-    combineVcfs(
-        "*best.vcf",
-        ("MixtureOfExpertPrediction", "Prediction from best expert"),
-        label="best"
-    );
-
-    combineVcfs(
-        "*mean.vcf",
-        ("MixtureOfExpertPrediction", "Mean predictions from experts"),
-        label="mean"
-    );
-
-    # Combine all bed files and sort
-    allBed = glob.glob(os.path.join(args.tmpdir, "*.choices.bed"));
-    choiceCounts = dict({0: 0, 1: 0, 2: 0});
-    with open(args.outputPrefix + ".choices.bed", 'w') as fhandle:
-        for f in allBed:
-            with open(f, 'r') as rhandle:
-                for line in rhandle.readlines():
-                    line = line.rstrip();
-                    if (len(line) > 0):
-                        fhandle.write(line + '\n');
-                        items = line.split();
-                        choice = int(items[3]);
-                        choiceCounts[choice] += 1;
-
-    print("Choice histogram = %s" % (str(choiceCounts)));
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(message)s")
+    main(args)

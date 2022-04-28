@@ -910,6 +910,13 @@ if __name__ == "__main__":
         type=int,
     )
 
+    parser.add_argument(
+        "--include_hp",
+        help="Include haplotags",
+        default=False,
+        action="store_true",
+    )
+
     args = parser.parse_args();
 
     FEATURE_LENGTH = args.featureLength
@@ -964,6 +971,7 @@ if __name__ == "__main__":
         min_mapq=args.mapq_threshold,
         q_threshold=args.q_threshold,
         reassembly_size=args.reconcilement_size,
+        include_hp_tags=args.include_hp,
     );
 
     logging.info("Getting callable sites");

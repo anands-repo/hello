@@ -7,17 +7,25 @@ import ast
 # from ReferenceCache import ReferenceCache
 from PySamFastaWrapper import PySamFastaWrapper as ReferenceCache
 from PileupContainerLite import PileupContainerLite
-import vcf
+
+# Note when only calling functionality is needed, the
+# installation may not contain the correct pyvcf installed
+# In that case, simply mimic it to satisfy dependencies
+try:
+    import vcf
+    import pybedtools
+except Exception:
+    pass
+
+import AnnotateRegions
 import sys
 import argparse
 import h5py
 import logging
-import pybedtools
 import os
 from multiprocessing import Pool
 import math
 import numpy as np
-import AnnotateRegions
 import os
 import PileupDataTools
 import collections

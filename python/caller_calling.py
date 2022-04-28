@@ -11,7 +11,6 @@ import numpy as np
 from vcfFromContigs import createVcfRecord
 import argparse
 import logging
-import vcf
 import sys
 import ast
 import torch
@@ -25,8 +24,17 @@ import trainDataTools
 import h5py
 import libCallability
 from MemmapDataLite import MemmapperCompound
-import pybedtools
+
+# Note when only calling functionality is needed, the
+# installation may not contain the correct pyvcf installed
+# In that case, simply mimic it to satisfy dependencies
+try:
+    import pybedtools
+except Exception:
+    pass
+
 import random
+import multiprocessing
 
 torch.set_num_threads(1);  # Torch to be run using a single thread
 random.seed(13)
@@ -39,7 +47,7 @@ except NameError:
         return x;
 
 
-FEATURE_LENGTH = 150
+DEFAULT_FEATURE_LENGTH = 150
 
 
 def one_hot_encode(bases):
@@ -59,7 +67,7 @@ def one_hot_encode(bases):
     return zeros
 
 
-def get_reference_segment(chromosome, start, stop, ref):
+def get_reference_segment(chromosome, start, stop, ref, span=DEFAULT_FEATURE_LENGTH):
     """
     Get reference slices in a given region
 
@@ -75,10 +83,12 @@ def get_reference_segment(chromosome, start, stop, ref):
     :param ref: PySamFastaWrapper
         Reference object
 
+    :param span: int
+        Span of reference segment to be read
+
     :return: np.array
         Numpy array with one-hot encoded bases
     """
-    span = FEATURE_LENGTH
     ref.chrom = chromosome
     midpoint = (start + stop) // 2
     left = midpoint - span // 2
@@ -524,7 +534,7 @@ def addToHDF5File(
         mainGroup['siteLabel'][:] = siteLabel;
 
 
-def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None, keep=False):
+def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None, keep=False, featureLength=DEFAULT_FEATURE_LENGTH):
     """
     Dump training data to disk
 
@@ -545,6 +555,9 @@ def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None, 
 
     :param keep: bool
         Keep HDF5 data in original format
+
+    :param featureLength: int
+        Length of feature map
     """
     missedCalls = [];
     tooLong = [];
@@ -572,6 +585,7 @@ def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None, 
                 entry['start'],
                 entry['stop'],
                 ref,
+                span=featureLength,
             )
 
             entry['fhandle'] = fhandle;
@@ -595,7 +609,7 @@ def dumpTrainingData(datagen, filename, hybrid=False, dump_vcf=False, ref=None, 
         vhandle.close()
 
 
-def scoreSite(siteDict, network, cache, hybrid=False):
+def scoreSite(siteDict, network, cache, hybrid=False, featureLength=DEFAULT_FEATURE_LENGTH):
     """
     Scores the alleles at a site based on data
 
@@ -610,6 +624,9 @@ def scoreSite(siteDict, network, cache, hybrid=False):
 
     :param hybrid: bool
         Whether we are running the tool in hybrid mode
+
+    :param featureLength: int
+        Size of NN feature map
     """
     featureDict = dict();
 
@@ -627,6 +644,7 @@ def scoreSite(siteDict, network, cache, hybrid=False):
         siteDict['start'],
         siteDict['stop'],
         cache,
+        span=featureLength,
     )
     ref_segment = torch.unsqueeze(ref_segment, dim=0)
 
@@ -636,7 +654,7 @@ def scoreSite(siteDict, network, cache, hybrid=False):
     return logLikelihoods;
 
 
-def vcfRecords(siteDict, network, ref, hybrid=False):
+def vcfRecords(siteDict, network, ref, hybrid=False, featureLength=DEFAULT_FEATURE_LENGTH):
     """
     Creates vcf records for a site
 
@@ -651,6 +669,9 @@ def vcfRecords(siteDict, network, ref, hybrid=False):
 
     :param hybrid: bool
         Whether we are running the tool in hybrid mode
+
+    :param featureLength: int
+        Size of NN feature-map
     """
     if ref.chrom != siteDict['chromosome']:
         ref.chrom = siteDict['chromosome'];
@@ -666,7 +687,7 @@ def vcfRecords(siteDict, network, ref, hybrid=False):
         "Supports at site = %s" % str(supportMsg)
     );
 
-    returns = scoreSite(siteDict, network, ref, hybrid);
+    returns = scoreSite(siteDict, network, ref, hybrid, featureLength=featureLength);
 
     if type(returns) is dict:
         logLikelihoods = returns;
@@ -731,6 +752,156 @@ def vcfRecords(siteDict, network, ref, hybrid=False):
             'expertPredictions': (expert0, expert1, expert2),
         });
         return record, features;
+
+
+def main(args):
+    if args.log:
+        pname = multiprocessing.current_process().name
+        logger = logging.getLogger(name="caller_%s" % str(pname))
+        logger.propagate = False
+        lhandler = logging.FileHandler(filename=args.log)
+        lhandler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(message)s"))
+        logger.setLevel(logging.INFO)
+        logger.addHandler(lhandler)
+    else:
+        logger = logging
+
+    logger.info("Launching caller with arguments %s" % str(args))
+
+    if args.only_contained:
+        trainDataTools.STRICT_INTERSECTION = True
+
+    if args.hybrid_eval:
+        trainDataTools.HYBRID_TRUTH_EVAL = True
+
+    if args.intersectRegions and (args.highconf is not None):
+        logger.info("Shrinking ground-truth to fit the given active regions");
+        newVcf, newBed = intersect(args.truth, args.highconf, args.activity, args.outputPrefix);
+        args.truth = newVcf;
+        args.highconf = newBed;
+        logger.info("Obtained new vcf and bed files %s, %s" % (args.truth, args.highconf));
+
+    # Create read factories and searcher factories
+    logger.info("Setting up readers")
+    bamfiles = args.bam.split(",");
+    bamReaders = [];
+    chrPrefixes = ["" for _ in bamfiles];
+
+    if args.chrPrefixes is not None:
+        chrPrefixes = args.chrPrefixes.split(",");
+        assert(len(chrPrefixes) == len(bamfiles)), \
+            "When provided, the length of chr prefixes should be the same as that of the bam files";
+
+    readSamplers = [];
+
+    for i, (bam, chrPrefix) in enumerate(zip(bamfiles, chrPrefixes)):
+        reader = PileupDataTools.ReadSampler(
+            bamfile=bam,
+            readRate=(PileupDataTools.READ_RATE_ILLUMINA if i == 0 else PileupDataTools.READ_RATE_PACBIO),
+            chrPrefix=chrPrefix,
+            pacbio=(i > 0) or (len(bamfiles) == 1 and args.pacbio),
+        );
+        readSamplers.append(reader);
+
+    searcherFactory = PileupDataTools.SearcherFactory(
+        ref=args.ref,
+        featureLength=args.featureLength,
+        pacbio=args.pacbio,
+        useInternalLeftAlignment=False,
+        noAlleleLevelFilter=args.noAlleleLevelFilter,
+        clr=False,      # TBD: Currently doesn't support CLR reads
+        hybrid_hotspot=args.hybrid_hotspot,
+        min_mapq=args.mapq_threshold,
+        q_threshold=args.q_threshold,
+        reassembly_size=args.reconcilement_size,
+        include_hp_tags=args.include_hp,
+    );
+
+    logger.info("Getting callable sites");
+
+    # Obtain the list of hotspots to be called
+    hotspots, searcherCollection = PileupDataTools.candidateReader(
+        readSamplers=readSamplers,
+        searcherFactory=searcherFactory,
+        activity=args.activity,
+        hotspotMode=args.hotspotMode,
+        provideSearchers=args.reuseSearchers,
+    );
+
+    logger.info("Obtained %d hotspots, creating data and running models" % len(hotspots));
+
+    # Generate data, and either dump to disk, or call variants
+    datagen = trainDataTools.data(
+        hotspots,
+        readSamplers,
+        searcherFactory,
+        args.ref,
+        vcf=args.truth,
+        bed=args.highconf,
+        hotspotMethod=args.hotspotMode,
+        searcherCollection=searcherCollection,
+    );
+
+    featureList = None;
+
+    if args.highconf is not None:
+        ref = ReferenceCache(database=args.ref)
+        dumpTrainingData(
+            datagen,
+            args.outputPrefix,
+            hybrid=(len(bamfiles) > 1),
+            dump_vcf=True,
+            ref=ref,
+            keep=args.keep_hdf5,
+            featureLength=args.featureLength,
+        );
+    else:
+        trainDataTools.MAX_ITEMS_PER_GROUP = 1024
+        assert(args.network is not None), "Provide DNN for variant calling";
+        cache = ReferenceCache(database=args.ref);
+        fhandle = open(args.outputPrefix + ".vcf", 'w');
+        network = torch.load(args.network, map_location='cpu');
+        network.eval();        
+
+        if args.provideFeatures:
+            network.providePredictions = True;
+            featureList = [];
+        else:
+            featureList = None;
+
+        for i, siteDict in enumerate(datagen):
+            if siteDict is None:
+                continue;
+
+            if len(siteDict['alleles']) == 0:
+                continue;
+
+            record = vcfRecords(
+                siteDict, network, cache, hybrid=(len(bamfiles) > 1), featureLength=args.featureLength);
+
+            if record is not None:
+                if type(record) is tuple:
+                    record, featureDict = record;
+                    fhandle.write(str(record) + '\n');
+                    featureList.append(featureDict);
+                else:
+                    fhandle.write(str(record) + "\n");
+
+            if (i + 1) % 100 == 0:
+                logger.info("Completed %d sites" % (i + 1));
+
+        fhandle.close();
+
+    featureFileName = None
+
+    if featureList is not None:
+        with open(args.outputPrefix + ".features", "wb") as whandle:
+            pickle.dump(featureList, whandle);
+            featureFileName = whandle.name
+
+    logger.info("Completed running the script");
+
+    return featureFileName, args.log
 
 
 if __name__ == "__main__":
@@ -910,135 +1081,24 @@ if __name__ == "__main__":
         type=int,
     )
 
+    parser.add_argument(
+        "--include_hp",
+        help="Include haplotags",
+        default=False,
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--log",
+        help="Log file name",
+        required=False,
+    )
+
     args = parser.parse_args();
 
-    FEATURE_LENGTH = args.featureLength
-
-    if args.only_contained:
-        trainDataTools.STRICT_INTERSECTION = True
-
-    if args.hybrid_eval:
-        trainDataTools.HYBRID_TRUTH_EVAL = True
-
     libCallability.initLogging(args.debug);
+
     logging.basicConfig(
         level=logging.INFO if not args.debug else logging.DEBUG, format='%(asctime)-15s %(message)s'
     );
-
-    if args.intersectRegions and (args.highconf is not None):
-        logging.info("Shrinking ground-truth to fit the given active regions");
-        newVcf, newBed = intersect(args.truth, args.highconf, args.activity, args.outputPrefix);
-        args.truth = newVcf;
-        args.highconf = newBed;
-        logging.info("Obtained new vcf and bed files %s, %s" % (args.truth, args.highconf));
-
-    # Create read factories and searcher factories
-    bamfiles = args.bam.split(",");
-    bamReaders = [];
-    chrPrefixes = ["" for _ in bamfiles];
-
-    if args.chrPrefixes is not None:
-        chrPrefixes = args.chrPrefixes.split(",");
-        assert(len(chrPrefixes) == len(bamfiles)), \
-            "When provided, the length of chr prefixes should be the same as that of the bam files";
-
-    readSamplers = [];
-
-    for i, (bam, chrPrefix) in enumerate(zip(bamfiles, chrPrefixes)):
-        reader = PileupDataTools.ReadSampler(
-            bamfile=bam,
-            readRate=(PileupDataTools.READ_RATE_ILLUMINA if i == 0 else PileupDataTools.READ_RATE_PACBIO),
-            chrPrefix=chrPrefix,
-            pacbio=(i > 0) or (len(bamfiles) == 1 and args.pacbio),
-        );
-        readSamplers.append(reader);
-
-    searcherFactory = PileupDataTools.SearcherFactory(
-        ref=args.ref,
-        featureLength=args.featureLength,
-        pacbio=args.pacbio,
-        useInternalLeftAlignment=False,
-        noAlleleLevelFilter=args.noAlleleLevelFilter,
-        clr=False,      # TBD: Currently doesn't support CLR reads
-        hybrid_hotspot=args.hybrid_hotspot,
-        min_mapq=args.mapq_threshold,
-        q_threshold=args.q_threshold,
-        reassembly_size=args.reconcilement_size,
-    );
-
-    logging.info("Getting callable sites");
-
-    # Obtain the list of hotspots to be called
-    hotspots, searcherCollection = PileupDataTools.candidateReader(
-        readSamplers=readSamplers,
-        searcherFactory=searcherFactory,
-        activity=args.activity,
-        hotspotMode=args.hotspotMode,
-        provideSearchers=args.reuseSearchers,
-    );
-
-    logging.info("Obtained %d hotspots" % len(hotspots));
-
-    # Generate data, and either dump to disk, or call variants
-    datagen = trainDataTools.data(
-        hotspots,
-        readSamplers,
-        searcherFactory,
-        args.ref,
-        vcf=args.truth,
-        bed=args.highconf,
-        hotspotMethod=args.hotspotMode,
-        searcherCollection=searcherCollection,
-    );
-
-    featureList = None;
-
-    if args.highconf is not None:
-        # if not args.test_labeling:
-        #     dumpTrainingData(datagen, args.outputPrefix, hybrid=(len(bamfiles) > 1));
-        # else:
-        #     cache = ReferenceCache(database=args.ref);
-        #     dump_vcfs_from_labels(datagen, args.outputPrefix + ".labeled", cache)
-        ref = ReferenceCache(database=args.ref)
-        dumpTrainingData(datagen, args.outputPrefix, hybrid=(len(bamfiles) > 1), dump_vcf=True, ref=ref, keep=args.keep_hdf5);
-    else:
-        trainDataTools.MAX_ITEMS_PER_GROUP = 1024
-        assert(args.network is not None), "Provide DNN for variant calling";
-        cache = ReferenceCache(database=args.ref);
-        fhandle = open(args.outputPrefix + ".vcf", 'w');
-        network = torch.load(args.network, map_location='cpu');
-        network.eval();        
-
-        if args.provideFeatures:
-            network.providePredictions = True;
-            featureList = [];
-        else:
-            featureList = None;
-
-        for i, siteDict in enumerate(datagen):
-            if siteDict is None:
-                continue;
-
-            if len(siteDict['alleles']) == 0:
-                continue;
-
-            record = vcfRecords(siteDict, network, cache, hybrid=(len(bamfiles) > 1));
-
-            if record is not None:
-                if type(record) is tuple:
-                    record, featureDict = record;
-                    fhandle.write(str(record) + '\n');
-                    featureList.append(featureDict);
-                else:
-                    fhandle.write(str(record) + "\n");
-
-            if (i + 1) % 100 == 0:
-                logging.info("Completed %d sites" % (i + 1));
-
-        fhandle.close();
-
-    if featureList is not None:
-        with open(args.outputPrefix + ".features", "wb") as whandle:
-            pickle.dump(featureList, whandle);
-
-    logging.info("Completed running the script");
+    main(args)

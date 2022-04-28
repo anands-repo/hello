@@ -14,7 +14,6 @@ import torch.utils.data
 import random
 import numpy as np
 from functools import reduce
-import vcf
 from collections import namedtuple
 import itertools
 import copy

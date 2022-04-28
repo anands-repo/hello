@@ -82,6 +82,7 @@ struct AlleleSearcherLiteFiltered
     vector<size_t> referenceStarts;
     vector<size_t> mapq;
     vector<int> orientation;
+    vector<int> hp;
     size_t windowStart;
     size_t qThreshold;
     size_t region_start;
@@ -126,6 +127,7 @@ struct AlleleSearcherLiteFiltered
     int READ_MAPQ_TRACK;
     int READ_ORIENTATION_TRACK;
     int POSITION_MARKER_TRACK;
+    int HP_TRACK;
     float snvThreshold;
     float indelThreshold;
     int num_pacbio_reads;
@@ -151,7 +153,7 @@ struct AlleleSearcherLiteFiltered
     void cluster_differing_regions_helper(const set<long>&, vector<pair<size_t, size_t>>&, bool);
     void determineDifferingRegions(bool);
     void assemble(size_t, size_t);
-    np::ndarray computeFeaturesColoredSimple(const string&, size_t, bool);
+    np::ndarray computeFeaturesColoredSimple(const string&, size_t, bool, bool);
     size_t numReadsSupportingAllele(const string&);
     size_t numReadsSupportingAlleleStrict(const string&, bool);
     vector<string> determineAllelesAtSite(size_t, size_t);
@@ -161,6 +163,7 @@ struct AlleleSearcherLiteFiltered
     int MappingQualityColor(int qual);
     int StrandColor(int);
     int PositionColor(size_t);
+    int HPColor(int);
     void addAlleleForAssembly(const string&);
     void clearAllelesForAssembly();
     void prepReadObjs();
@@ -183,6 +186,7 @@ struct AlleleSearcherLiteFiltered
         const p::list& mapq,
         const p::list& orientation,
         const p::list& pacbio,
+        const p::list& hp,
         const string& reference,
         size_t windowStart,
         size_t start,

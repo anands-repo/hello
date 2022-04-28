@@ -1,3 +1,4 @@
+// © 2019 University of Illinois Board of Trustees.  All rights reserved
 #include <cstdlib>
 #include <boost/python.hpp>
 #include <boost/python/numpy.hpp>
@@ -114,6 +115,7 @@ BOOST_PYTHON_MODULE(libCallability)
                const p::list&,
                const p::list&,
                const p::list&,
+               const p::list&,
                const string&,
                size_t,
                size_t,
@@ -132,6 +134,7 @@ BOOST_PYTHON_MODULE(libCallability)
         .def_readwrite("minMapQ", &AlleleSearcherLiteFiltered::minMapQ)
         .def_readwrite("qThreshold", &AlleleSearcherLiteFiltered::qThreshold)
         .def_readwrite("max_reassembly_region_size", &AlleleSearcherLiteFiltered::max_reassembly_region_size)
+        .def_readwrite("minCount", &AlleleSearcherLiteFiltered::minCount)
         .def("initialize", &AlleleSearcherLiteFiltered::initialize)
         .def("determineDifferingRegions", &AlleleSearcherLiteFiltered::determineDifferingRegions)
         .def("assemble_alleles_from_reads", &AlleleSearcherLiteFiltered::assemble_alleles_from_reads)

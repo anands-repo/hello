@@ -44,6 +44,7 @@ class SearcherFactory:
         min_mapq=10,
         q_threshold=10,
         reassembly_size=10,
+        include_hp_tags=False,
     ):
         """
         Factory object for creating a specific type of allele searcher again and again
@@ -77,6 +78,9 @@ class SearcherFactory:
 
         :param reassembly_size: int
             Size of the region to allow pacbio-illumina realignment
+
+        :param include_hp_tags: bool
+            Include haplotags in read tensors
         """
         self.featureLength = featureLength
         self.pacbio = pacbio
@@ -88,6 +92,7 @@ class SearcherFactory:
         self.min_mapq = min_mapq
         self.q_threshold = q_threshold
         self.reassembly_size = reassembly_size
+        self.include_hp_tags = include_hp_tags
 
     def __call__(self, container, start, stop):
         """
@@ -113,6 +118,7 @@ class SearcherFactory:
             q_threshold=self.q_threshold,
             mapq_threshold=self.min_mapq,
             reassembly_size=self.reassembly_size,
+            include_hp_tags=self.include_hp_tags,
         )
         if hasattr(searcher, 'searcher'):
             assert(searcher.searcher.check_q_threshold(self.q_threshold)), "Q threshold not set correctly"

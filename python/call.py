@@ -6,15 +6,18 @@ import random
 import warnings
 import logging
 import glob
-from find_chr_prefixes import get_reference_prefixes
+import HotspotDetectorDVFiltered
+import shardHotspots
+import caller_calling
+import multiprocessing
+from PySamFastaWrapper import PySamFastaWrapper
+from functools import partial
+import tqdm
+import libCallability
+import pysam
+import prepareVcf
 
-CHROMOSOMES = [str(i) for i in range(1, 23)]
-
-
-def parallel_execute(cmd, nt):
-    subprocess.call(
-        "cat %s | shuf | parallel --eta -j %d" % (cmd, nt), shell=True, executable="/bin/bash"
-    )
+libCallability.initLogging(False)
 
 
 def get_bam_string(bam):
@@ -25,299 +28,202 @@ def get_bam_string(bam):
     return bamname.replace(".", "__")
 
 
-def main(ibam, pbam):
-    if (not ibam) or (not pbam):
-        raise NotImplementedError("Only hybrid mode has been implemented")
+def get_workdir(ibam, pbam, chrom=None, string="features"):
+    prefix_dir = string
+    if chrom:
+        prefix_dir = "%s_%s" % (prefix_dir, chrom)
+    if ibam:
+        prefix_dir += "_" + get_bam_string(ibam)
+    if pbam:
+        prefix_dir += "_" + get_bam_string(pbam)
+    return prefix_dir
 
-    logging.info("Creating hotspot detection jobs")
 
-    caller_commands = []
-    feature_prefixes = []
+def get_chunks(length, nJobs):
+    split_size = length // nJobs
+    final_job = nJobs * split_size < length
+    ranges = []
+    for i in range(nJobs):
+        start = i * split_size
+        stop = min((i + 1) * split_size, length)
+        ranges.append((start, stop))
+    if final_job:
+        ranges.append((nJobs * split_size, length))
+    return ranges
 
-    ib = ibam
-    pbam_selected = pbam
-    ib_string = get_bam_string(ib)  # ib.replace(".", "__").replace("/", "___")
-    pb_string = get_bam_string(pbam_selected)  # pbam_selected.replace(".", "__").replace("/", "___")
 
-    features_dir = "features_%s__%s" % (
-        ib_string,
-        pb_string
-    )
+def launcher(args_, functor, stage):
+    try:
+        return functor(args_)
+    except Exception as e:
+        logger.error("Failure when executing %s for args %s" % (stage, str(args_)))
+        raise e
 
+
+def get_reference_chromosomes(ref):
+    with pysam.FastaFile(ref) as fhandle:
+        references = set(fhandle.references)
+        base_chromosomes = [str(x) for x in range(1, 23)] + ["X", "Y"]
+        no_prefix_chromosomes = references.intersection(base_chromosomes)
+        prefixed_chromosomes = references.intersection(["chr%s" % i for i in base_chromosomes])
+
+    return max(no_prefix_chromosomes, prefixed_chromosomes, key=lambda x: len(x))
+
+
+def main(args):
+    # Convenience assignments
+    ibam, pbam = args.ibam, args.pbam
+    pacbio = pbam and not ibam
+
+    features_dir = get_workdir(ibam, pbam)
     features_dir = os.path.join(args.workdir, features_dir)
-
     if not os.path.exists(features_dir):
         os.makedirs(features_dir)
-
-    caller_command_filename = os.path.join(features_dir, "caller_commands.sh")
-    chandle = open(caller_command_filename, "w")
-    logfiles = []
-
     feature_file_number = 0
+    caller_args = []
+    ref = PySamFastaWrapper(args.ref)
 
-    for chrom in CHROMOSOMES:
+    bam_arg = None
+    if ibam and pbam:
+        bam_arg = "%s,%s" % (ibam, pbam)
+    elif ibam:
+        bam_arg = ibam
+    elif pbam:
+        bam_arg = pbam
+    else:
+        raise ValueError("At least one of ibam or pbam must be provided")
+
+    workers = multiprocessing.Pool(args.num_threads)
+
+    for chrom in args.CHROMOSOMES:
+        # Prepare output directory
         output_dir = os.path.join(
-            args.workdir,
-            "hotspots_%s_%s_%s" % (ib_string, chrom, pb_string)
-        )
-        output_dir.replace(".", "__")
+            args.workdir, get_workdir(ibam, pbam, chrom=chrom, string="hotspots"))
 
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        # Create hotspot jobs
-        create_cmd = [
-            "python",
-            create_hotspot_jobs_scripts,
-            "--nJobs", "%d" % 500,
-            "--chromosome", "%s" % chrom,
-            "--bam", "%s" % ib,
-            "--bam2", "%s" % pbam_selected,
-            "--ref", "%s" % args.ref,
-            "--log",
-            "--outputDir", "%s" % output_dir,
-            "--q_threshold", "%d" % args.q_threshold,
-            "--mapq_threshold", "%d" % args.mapq_threshold,
-        ]
+        # Create hotspot command args
+        ref.chrom = chrom
+        hotspot_args = []
 
-        if args.hybrid_hotspot:
-            create_cmd += ["--hybrid_hotspot"]
+        for i, (start, stop) in enumerate(get_chunks(len(ref), 500)):
+            output_name = os.path.join(
+                output_dir, "job_chromosome%s_job%d.txt" % (chrom, i))
+            hotspot_args.append(argparse.Namespace(
+                bam=bam_arg,
+                ref=args.ref,
+                region="%s,%d,%d" % (chrom, start, stop),
+                pacbio=pacbio,
+                output=output_name,
+                hybrid_hotspot=args.hybrid_hotspot,
+                q_threshold=args.q_threshold,
+                mapq_threshold=args.mapq_threshold,
+            ))
 
-        subprocess.call(create_cmd)
-
-        command = os.path.join(output_dir, "jobs_chromosome%s.sh" % chrom)
-        results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
-
-        logging.info("Created jobs to create hotspots, running to generate hotspots")
-        # subprocess.call(
-        #     "cat %s | shuf | parallel --eta -j %d" % (command, args.num_threads), shell=True, executable="/bin/bash"
-        # )
-        parallel_execute(command, args.num_threads)
-
-        logging.info("Combining all hotspots and sharding")
-        hotspot_name = os.path.join(output_dir, "hotspots.txt")
-        fhandle = open(hotspot_name, "w")
-        for r in results:
-            if os.path.exists(r):
-                subprocess.call(["cat", r], stdout=fhandle)
-                pass
-        fhandle.close()
-
-        # Shard hotspots
-        shard_name = os.path.join(output_dir, "shard")
-        shard_command = [
-            "python",
-            shard_script,
-            "--hotspots", hotspot_name,
-            "--outputPrefix", shard_name
-        ]
-        subprocess.call(shard_command)
-
-        logging.info("Completed sharding, creating caller commands for dumping training data")
-
-        # python /root/storage/subsampled/Illumina/30x/training/hello/python/caller.py --activity /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt
-        # --bam /root/storage/subsampled/Illumina/30x/HG001.hs37d5.30x.RG.realigned.bam,/root/storage/subsampled/PacBio/30x/HG001.SequelII.pbmm2.hs37d5.whatshap.haplotag.RTG.trio.bam
-        # --ref /root/storage/data/hs37d5.fa --truth /root/storage/subsampled/3.3.2/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf
-        # --highconf /root/storage/subsampled/3.3.2/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_nosomaticdel.bed --featureLength 250 --intersect --reuse --simple
-        # --outputPrefix /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt_data >& /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt_log.log
-        shards = glob.glob("%s*.txt" % shard_name)
-
-        for shard in shards:
-            output_prefix = os.path.join(features_dir, "features%d" % feature_file_number)
-            logfilename = os.path.join(features_dir, "features%d.log" % feature_file_number)
-            command_string = "python %s" % caller_command
-            command_string += " --activity %s" % shard
-            command_string += " --bam %s,%s" % (ib, pbam_selected)
-            command_string += " --ref %s" % args.ref
-            command_string += " --network %s" % args.network
-            command_string += " --featureLength %d" % 150
-            command_string += " --simple"
-            command_string += " --provideFeatures"
-            command_string += " --outputPrefix %s" % output_prefix
-            command_string += " --hybrid_hotspot" if args.hybrid_hotspot else ""
-            command_string += " --q_threshold %d" % args.q_threshold
-            command_string += " --mapq_threshold %d" % args.mapq_threshold
-            command_string += " --reconcilement_size %d" % args.reconcilement_size
-            chandle.write(
-                command_string + " >& " + logfilename + "\n"
-            )
-            feature_file_number += 1
-            logfiles.append(logfilename)
-
-        logging.info("Created call command for chromosome %s" % chrom)
-
-    chandle.close()
-
-    logging.info("Launching all caller commands")
-
-    # subprocess.call(
-    #     "cat %s | parallel -j %d --eta" % (caller_command_filename, args.num_threads), shell=True, executable="/bin/bash"
-    # )
-    parallel_execute(caller_command_filename, args.num_threads)
-
-    logging.info("Completed runs, checking log files")
-
-    for logfilename in logfiles:
-        with open(logfilename, 'r') as lhandle:
-            if "Completed running the script" not in lhandle.read():
-                logging.error("File %s doesn't have termination string" % logfilename)
-                return
-
-    logging.info("All commands completed correctly, preparing vcf")
-
-    prepare_vcf_command = [
-        "python",
-        prepare_vcf_script,
-        "--prefix", os.path.join(features_dir, "features"),
-        "--ref", args.ref,
-        "--outputPrefix", os.path.join(args.workdir, "results"),
-    ]
-
-    subprocess.call(prepare_vcf_command)
-
-
-def main_single(bam, pacbio):
-    logging.info("Creating hotspot detection jobs")
-
-    caller_commands = []
-    feature_prefixes = []
-
-    ib = bam
-    pbam_selected = None
-    ib_string = get_bam_string(ib)  # ib.replace(".", "__").replace("/", "___")
-    pb_string = ""
-
-    features_dir = "features_%s__%s" % (
-        ib_string,
-        pb_string
-    )
-
-    features_dir = os.path.join(args.workdir, features_dir)
-
-    if not os.path.exists(features_dir):
-        os.makedirs(features_dir)
-
-    caller_command_filename = os.path.join(features_dir, "caller_commands.sh")
-    chandle = open(caller_command_filename, "w")
-    logfiles = []
-
-    feature_file_number = 0
-
-    for chrom in CHROMOSOMES:
-        output_dir = os.path.join(
-            args.workdir,
-            "hotspots_%s_%s_%s" % (ib_string, chrom, pb_string)
+        # Run hotspot detection in parallel
+        logger.info("Launching hotspot detection for chromosome %s" % chrom)
+        hotspot_results = []
+        runner = partial(
+            launcher,
+            functor=HotspotDetectorDVFiltered.main,
+            stage="Hotspot detection for chromosome %s" % chrom
         )
-        output_dir.replace(".", "__")
+        for result in tqdm.tqdm(
+            workers.imap_unordered(runner, hotspot_args),
+            desc="Hotspots, chromosome %s" % chrom,
+            total=len(hotspot_args)):
+            hotspot_results.append(result)
 
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-
-        # Create hotspot jobs
-        create_cmd = [
-            "python",
-            create_hotspot_jobs_scripts,
-            "--nJobs", "%d" % 500,
-            "--chromosome", "%s" % chrom,
-            "--bam", "%s" % ib,
-            "--ref", "%s" % args.ref,
-            "--log",
-            "--outputDir", "%s" % output_dir,
-            "--q_threshold", "%d" % args.q_threshold,
-            "--mapq_threshold", "%d" % args.mapq_threshold,
-        ]
-        if pacbio:
-            create_cmd.append("--pacbio")
-        subprocess.call(create_cmd)
-
-        command = os.path.join(output_dir, "jobs_chromosome%s.sh" % chrom)
-        results = [os.path.join(output_dir, "jobs_chromosome%s_job%d.txt" % (chrom, i)) for i in range(501)]
-
-        logging.info("Created jobs to create hotspots, running to generate hotspots")
-        # subprocess.call(
-        #     "cat %s | shuf | parallel --eta -j %d" % (command, args.num_threads), shell=True, executable="/bin/bash"
-        # )
-        parallel_execute(command, args.num_threads)
-
-        logging.info("Combining all hotspots and sharding")
+        logger.info("Combining all hotspots and sharding")
         hotspot_name = os.path.join(output_dir, "hotspots.txt")
-        fhandle = open(hotspot_name, "w")
-        for r in results:
-            if os.path.exists(r):
-                subprocess.call(["cat", r], stdout=fhandle)
-                pass
-        fhandle.close()
+        with open(hotspot_name, "w") as fhandle:
+            for r in hotspot_results:
+                if os.path.exists(r):
+                    subprocess.run(["cat", r], stdout=fhandle, check=True)
 
         # Shard hotspots
         shard_name = os.path.join(output_dir, "shard")
-        shard_command = [
-            "python",
-            shard_script,
-            "--hotspots", hotspot_name,
-            "--outputPrefix", shard_name
-        ]
-        subprocess.call(shard_command)
-
-        logging.info("Completed sharding, creating caller commands for dumping training data")
-
-        # python /root/storage/subsampled/Illumina/30x/training/hello/python/caller.py --activity /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt
-        # --bam /root/storage/subsampled/Illumina/30x/HG001.hs37d5.30x.RG.realigned.bam,/root/storage/subsampled/PacBio/30x/HG001.SequelII.pbmm2.hs37d5.whatshap.haplotag.RTG.trio.bam
-        # --ref /root/storage/data/hs37d5.fa --truth /root/storage/subsampled/3.3.2/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.vcf
-        # --highconf /root/storage/subsampled/3.3.2/HG001_GRCh37_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_nosomaticdel.bed --featureLength 250 --intersect --reuse --simple
-        # --outputPrefix /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt_data >& /root/storage/subsampled/Illumina/30x/training/shards0/shard0.txt_log.log
+        shard_args = argparse.Namespace(
+            hotspots=hotspot_name,
+            minSeparation=25,
+            maxShards=500,
+            outputPrefix=shard_name,
+        )
+        shardHotspots.main(shard_args)
+        logger.info("Completed sharding, creating caller commands for running NN")
         shards = glob.glob("%s*.txt" % shard_name)
 
+        # Create caller commands
         for shard in shards:
             output_prefix = os.path.join(features_dir, "features%d" % feature_file_number)
             logfilename = os.path.join(features_dir, "features%d.log" % feature_file_number)
-            command_string = "python %s" % caller_command
-            command_string += " --activity %s" % shard
-            command_string += " --bam %s" % ib
-            command_string += " --ref %s" % args.ref
-            command_string += " --network %s" % args.network
-            command_string += " --featureLength %d" % 150
-            command_string += " --simple"
-            command_string += " --provideFeatures"
-            command_string += " --outputPrefix %s" % output_prefix
-            command_string += " --pacbio" if pacbio else ""
-            command_string += " --q_threshold %d" % args.q_threshold
-            command_string += " --mapq_threshold %d" % args.mapq_threshold
-            chandle.write(
-                command_string + " >& " + logfilename + "\n"
+            args_ = argparse.Namespace(
+                bam=bam_arg,
+                activity=shard,
+                ref=args.ref,
+                network=args.network,
+                outputPrefix=output_prefix,
+                debug=False,
+                provideFeatures=True,
+                hotspotMode="BOTH",
+                chrPrefixes=None,
+                featureLength=150,
+                truth=None,
+                highconf=None,
+                intersectRegions=False,
+                simple=True,
+                reuseSearchers=False,
+                noAlleleLevelFilter=False,
+                clr=False,
+                hybrid_hotspot=args.hybrid_hotspot,
+                pacbio=pacbio,
+                test_labeling=False,
+                only_contained=False,
+                hybrid_eval=False,
+                q_threshold=args.q_threshold,
+                mapq_threshold=args.mapq_threshold,
+                keep_hdf5=False,
+                reconcilement_size=args.reconcilement_size,
+                include_hp=args.include_hp,
+                log=logfilename,
             )
             feature_file_number += 1
-            logfiles.append(logfilename)
+            caller_args.append(args_)
 
-        logging.info("Created call command for chromosome %s" % chrom)
+        logger.info("Created call commands for chromosome %s" % chrom)
 
-    chandle.close()
+    logger.info("Finished hotspot generation for all chromosomes. Launching all caller commands.")
 
-    logging.info("Launching all caller commands")
+    logfiles = []
+    runner = partial(launcher, functor=caller_calling.main, stage="Caller")
+    for feature_filename, feature_logs in tqdm.tqdm(
+        workers.imap_unordered(runner, caller_args),
+        desc="Caller progress",
+        total=len(caller_args),
+    ):
+        logfiles.append(feature_logs)
 
-    # subprocess.call(
-    #     "cat %s | parallel -j %d --eta" % (caller_command_filename, args.num_threads), shell=True, executable="/bin/bash"
-    # )
-    parallel_execute(caller_command_filename, args.num_threads)
-
-    logging.info("Completed runs, checking log files")
+    logger.info("Completed runs, checking log files")
 
     for logfilename in logfiles:
         with open(logfilename, 'r') as lhandle:
             if "Completed running the script" not in lhandle.read():
-                logging.error("File %s doesn't have termination string" % logfilename)
-                return
+                logger.error("Log file %s doesn't have termination string" % logfilename)
+                raise ValueError("Did not run")
 
-    logging.info("All commands completed correctly, preparing vcf")
+    logger.info("Completed running all caller commands correctly, preparing vcf")
 
-    prepare_vcf_command = [
-        "python",
-        prepare_vcf_script,
-        "--prefix", os.path.join(features_dir, "features"),
-        "--ref", args.ref,
-        "--outputPrefix", os.path.join(args.workdir, "results"),
-    ]
-
-    subprocess.call(prepare_vcf_command)
+    prepare_vcf_args = argparse.Namespace(
+        prefix=os.path.join(features_dir, "features"),
+        ref=args.ref,
+        tmpdir="/tmp/vcftemp",
+        numThreads=args.num_threads,
+        outputPrefix=os.path.join(args.workdir, "results"),
+        checkRuns=False,
+    )
+    result_vcf_name = prepareVcf.main(prepare_vcf_args)
+    logger.info("Completed runs. Results in %s" % result_vcf_name)
 
 
 if __name__ == "__main__":
@@ -393,51 +299,29 @@ if __name__ == "__main__":
         type=int,
     )
 
+    parser.add_argument(
+        "--include_hp",
+        help="Include HP tags in tensors",
+        default=False,
+        action="store_true",
+    )
+
     args = parser.parse_args()
 
+    # Logging
+    logger = logging.getLogger(name="call")
+    logger.propagate = False
+    fmt = logging.Formatter("%(asctime)s %(levelname)s:%(message)s")
+    lhandler = logging.StreamHandler()
+    lhandler.setFormatter(fmt)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(lhandler)
+
     if args.chromosomes:
-        CHROMOSOMES = args.chromosomes.split(",")
+        args.CHROMOSOMES = args.chromosomes.split(",")
     else:
-        ref_prefix = get_reference_prefixes(args.ref)
-        if ref_prefix:
-            CHROMOSOMES = [ref_prefix + i for i in CHROMOSOMES]
+        args.CHROMOSOMES = get_reference_chromosomes(args.ref)
 
-    logging.basicConfig(level=logging.INFO)
+    logger.info("Will run variant calling for chromosomes %s" % str(args.CHROMOSOMES))
 
-    path = os.path.split(os.path.abspath(__file__))[0]
-
-    ibams = []
-    pbams = []
-
-    if args.ibam:
-        ibams = args.ibam.split(",")
-
-    if args.pbam:
-        pbams = args.pbam.split(",")
-
-    assert(len(ibams) > 0 or len(pbams) > 0), "Provide at least one BAM file"
-
-    create_hotspot_jobs_scripts = os.path.join(
-        path, "createJobsDVFiltered.py"
-    )
-
-    shard_script = os.path.join(
-        path, "shardHotspots.py"
-    )
-
-    caller_command = os.path.join(
-        path, "caller_calling.py"
-    )
-
-    prepare_vcf_script = os.path.join(
-        path, "prepareVcf.py"
-    )
-
-    # Create hotspot jobs
-    if len(ibams) > 0 and len(pbams) > 0:
-        main(ibams[0], pbams[0])
-    else:
-        if len(ibams) > 0:
-            main_single(ibams[0], pacbio=False)
-        else:
-            main_single(pbams[0], pacbio=True)
+    main(args)

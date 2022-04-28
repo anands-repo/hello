@@ -106,6 +106,38 @@ def cluster_hotspots(hotspots, min_separation, min_items_per_cluster):
         cluster = []
 
 
+def main(args):
+    dirpath, _ = os.path.split(os.path.abspath(args.outputPrefix));
+
+    if os.path.exists(dirpath):
+        assert(os.path.isdir(dirpath)), "Invalid path";
+        logging.info("Directory %s exists" % dirpath);
+    else:
+        os.makedirs(dirpath);
+        logging.info("Creating directory %s" % dirpath);
+
+    logging.info("Counting hotspots")
+    num_hotspots = count_hotspots(args.hotspots)
+    min_items_per_cluster = math.ceil(num_hotspots / args.maxShards)
+    logging.info("Sharding with >= %d items per cluster" % min_items_per_cluster)
+    shard_gen = cluster_hotspots(
+        args.hotspots, min_separation=args.minSeparation, min_items_per_cluster=min_items_per_cluster
+    )
+    counter = 0
+
+    def dumpToFile(cluster_):
+        if len(cluster_) == 0:
+            return;
+
+        with open(args.outputPrefix + "%d.txt" % counter, 'w') as whandle:
+            for line in cluster_:
+                whandle.write(str(line) + "\n");
+
+    for cluster in shard_gen:
+        dumpToFile(cluster)
+        counter += 1
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Shard a set of hotspots for parallel runs");
 
@@ -137,32 +169,5 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)-15s %(message)s');
 
-    dirpath, _ = os.path.split(os.path.abspath(args.outputPrefix));
-
-    if os.path.exists(dirpath):
-        assert(os.path.isdir(dirpath)), "Invalid path";
-        logging.info("Directory %s exists" % dirpath);
-    else:
-        os.makedirs(dirpath);
-        logging.info("Creating directory %s" % dirpath);
-
-    logging.info("Counting hotspots")
-    num_hotspots = count_hotspots(args.hotspots)
-    min_items_per_cluster = math.ceil(num_hotspots / args.maxShards)
-    logging.info("Sharding with >= %d items per cluster" % min_items_per_cluster)
-    shard_gen = cluster_hotspots(
-        args.hotspots, min_separation=args.minSeparation, min_items_per_cluster=min_items_per_cluster
-    )
-    counter = 0
-
-    def dumpToFile(cluster_):
-        if len(cluster_) == 0:
-            return;
-
-        with open(args.outputPrefix + "%d.txt" % counter, 'w') as whandle:
-            for line in cluster_:
-                whandle.write(str(line) + "\n");
-
-    for cluster in shard_gen:
-        dumpToFile(cluster)
-        counter += 1
+    main(args)
+    

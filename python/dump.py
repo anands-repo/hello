@@ -140,6 +140,7 @@ def main_single(bams, pacbio):
                     command_string += " --q_threshold %d" % args.q_threshold
                     command_string += " --mapq_threshold %d" % args.mapq_threshold
                     command_string += " --keep_hdf5" if args.keep_hdf5 else ""
+                    command_string += " --include_hp" if args.include_hp else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -279,6 +280,7 @@ def main(ibams, pbams, random_combine=False):
                     command_string += " --mapq_threshold %d" % args.mapq_threshold
                     command_string += " --reconcilement_size %d" % args.reconcilement_size
                     command_string += " --keep_hdf5" if args.keep_hdf5 else ""
+                    command_string += " --include_hp" if args.include_hp else ""
                     fhandle.write(command_string + " >& " + os.path.join(output_dir, "%s_log" % shard) + "\n")
 
             logging.info("Created data dump commands")
@@ -431,6 +433,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--keep_hdf5",
         help="Keep hdf5 files",
+        default=False,
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--include_hp",
+        help="Include HP tags in tensors",
         default=False,
         action="store_true",
     )

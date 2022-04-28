@@ -16,6 +16,14 @@ class LocationOutOfBounds(Exception):
         super().__init__(*args, **kwargs)
 
 
+def get_hp(tags):
+    for item in tags:
+        if len(item) == 2 and item[0] == "HP":
+            return item
+
+    return ("HP", 0)
+
+
 class AlleleSearcherLite:
     """
     This file provides a python wrapper for the C++ AlleleSearcherLite class
@@ -36,6 +44,7 @@ class AlleleSearcherLite:
         mapq_threshold=10,
         q_threshold=10,
         reassembly_size=10,
+        include_hp_tags=False,
     ):
         """
         :param container: list/PileupContainerLite
@@ -76,6 +85,9 @@ class AlleleSearcherLite:
 
         :param reassembly_size: int
             Size of reassembly region
+
+        :param include_hp_tags: bool
+            Include hp tags
         """
         self.start = start
         self.stop = stop
@@ -95,9 +107,11 @@ class AlleleSearcherLite:
         mapq = []
         orientation = []
         cigartuples = []
+        hp = []
         self.noReads = [False for i in containers]
         self.pacbio = (len(containers) == 1) and pacbio
         self.hybrid = len(containers) > 1
+        self.include_hp_tags = include_hp_tags
 
         for i, container_ in enumerate(containers):
             if len(container_.pileupreads) != 0:
@@ -108,6 +122,7 @@ class AlleleSearcherLite:
                 refStarts += [p.alignment.reference_start for p in container_.pileupreads]
                 mapq += [p.alignment.mapping_quality for p in container_.pileupreads]
                 orientation += [-1 if p.alignment.is_reverse else 1 for p in container_.pileupreads]
+                hp = [get_hp(p.alignment.tags)[1] for p in container_.pileupreads]
             else:
                 self.noReads[i] = True
 
@@ -150,6 +165,7 @@ class AlleleSearcherLite:
             mapq,
             orientation,
             pacbio_flags,
+            hp,
             reference,
             windowStart,
             start,
@@ -227,10 +243,12 @@ class AlleleSearcherLite:
             Feature using numpy
         """
         if self.noReads[index if self.hybrid else 0]:
-            return np.zeros(shape=(1, self.featureLength, 6), dtype=np.uint8)
+            return np.zeros(shape=(
+                1, self.featureLength, 7 if self.include_hp_tags else 6), dtype=np.uint8)
         else:
             index = index == 1 if self.hybrid else self.pacbio
-            return self.searcher.computeFeaturesColoredSimple(allele, self.featureLength, index)
+            return self.searcher.computeFeaturesColoredSimple(
+                allele, self.featureLength, index, self.include_hp_tags)
 
     @property
     def cluster(self):

@@ -39,6 +39,7 @@ class AlignedSegmentFunctional(AlignedSegmentDummy):
         query_name,
         is_reverse,
         mapping_quality,
+        tags=None,
     ):
         super().__init__()
         self.reference_start = referenceStart
@@ -52,6 +53,7 @@ class AlignedSegmentFunctional(AlignedSegmentDummy):
         self.query_name = query_name
         self.is_reverse = is_reverse
         self.mapping_quality = mapping_quality
+        self.tags = tags
 
     def get_aligned_pairs(self):
         if self.alignedPairs is None:
@@ -561,6 +563,7 @@ class PileupContainerLite:
                         pileupread.alignment.query_name,
                         pileupread.alignment.is_reverse,
                         pileupread.alignment.mapping_quality,
+                        pileupread.alignment.tags,
                     )
 
                     pileupread = PileupReadDummy(newAlignedSegment)

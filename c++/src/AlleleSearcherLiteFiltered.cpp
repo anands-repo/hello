@@ -343,6 +343,7 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     const p::list& mapq,
     const p::list& orientation,
     const p::list& pacbio,
+    const p::list& hp,
     const string& reference,
     size_t windowStart,
     size_t start,
@@ -356,6 +357,7 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     referenceStarts(LIST_TO_SIZET_VECTOR(referenceStarts)),
     mapq(LIST_TO_SIZET_VECTOR(mapq)),
     orientation(LIST_TO_INT_VECTOR(orientation)),
+    hp(LIST_TO_INT_VECTOR(hp)),
     mismatchScore(1),
     insertScore(4),
     deleteScore(4),
@@ -379,6 +381,7 @@ AlleleSearcherLiteFiltered::AlleleSearcherLiteFiltered(
     READ_MAPQ_TRACK(3),
     READ_ORIENTATION_TRACK(4),
     POSITION_MARKER_TRACK(5),
+    HP_TRACK(6),
     snvThreshold(0.12),
     indelThreshold(0.12),
     minCount(2),
@@ -1011,11 +1014,25 @@ int AlleleSearcherLiteFiltered::PositionColor(size_t position)
     return this->background_position_color;
 }
 
+// HP marker
+int AlleleSearcherLiteFiltered::HPColor(int hp)
+{
+    if (hp == 1) {
+        return 120;
+    } else if (hp == 2) {
+        return 240;
+    } else {
+        return 0;
+    }
+}
+
 // Computes colored feature-maps with indels colored in at a single position
 // This follows the DeepVariant method
-np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const string& allele, size_t featureLength, bool pacbio_) {
+np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(
+    const string& allele, size_t featureLength, bool pacbio_, bool include_hp_tags
+) {
     size_t numSupports = this->numReadsSupportingAlleleStrict(allele, pacbio_);
-    size_t numChannels = 6;
+    size_t numChannels = include_hp_tags ? 7: 6;
 
     if (numSupports == 0) {
         // Return dummy array if there is no support
@@ -1049,6 +1066,7 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
         long rdcounter = 0;
         int mapQColor = this->MappingQualityColor(this->mapq[readId]);
         int strandColor = this->StrandColor(this->orientation[readId]);
+        int hp_color = this->HPColor(this->hp[readId]);
 
         for (auto& cigar: cigartuple) {
             long operation = cigar.first;
@@ -1071,6 +1089,9 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
                             accessArray(array, readCounter, fmapindex, READ_MAPQ_TRACK) = mapQColor;
                             accessArray(array, readCounter, fmapindex, READ_ORIENTATION_TRACK) = strandColor;
                             accessArray(array, readCounter, fmapindex, POSITION_MARKER_TRACK) = positionColor;
+                            if (include_hp_tags) {
+                                accessArray(array, readCounter, fmapindex, HP_TRACK) = hp_color;
+                            }
                         }
                     }
                     rfcounter += length;
@@ -1090,6 +1111,9 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
                             accessArray(array, readCounter, fmapindex, READ_MAPQ_TRACK) = mapQColor;
                             accessArray(array, readCounter, fmapindex, READ_ORIENTATION_TRACK) = strandColor;
                             accessArray(array, readCounter, fmapindex, POSITION_MARKER_TRACK) = positionColor;
+                            if (include_hp_tags) {
+                                accessArray(array, readCounter, fmapindex, HP_TRACK) = hp_color;
+                            }
                         }
 
                         // Fill read base color at the first position
@@ -1129,6 +1153,9 @@ np::ndarray AlleleSearcherLiteFiltered::computeFeaturesColoredSimple(const strin
                         accessArray(array, readCounter, fmapindex, READ_MAPQ_TRACK) = mapQColor;
                         accessArray(array, readCounter, fmapindex, READ_ORIENTATION_TRACK) = strandColor;
                         accessArray(array, readCounter, fmapindex, POSITION_MARKER_TRACK) = positionColor;
+                        if (include_hp_tags) {
+                            accessArray(array, readCounter, fmapindex, HP_TRACK) = hp_color;
+                        }
                     }
                 }
                 case BAM_CSOFT_CLIP: {
