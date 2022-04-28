@@ -19,11 +19,14 @@ import prepareVcf
 import torch
 import numpy as np
 import random
+import os
 
 libCallability.initLogging(False)
 torch.set_num_threads(1)
 random.seed(13)
 np.random.seed(13)
+# torch.set_num_threads isn't working in multiprocessing
+os.environ["OMP_NUM_THREADS"] = 1
 
 
 def get_bam_string(bam):
