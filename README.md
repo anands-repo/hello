@@ -10,6 +10,15 @@ Older methodologies used in a prior version of HELLO, with only support for hybr
 
 The models released in this package (including models for hybrid variant calling) do not follow methodologies described in the bioRxiv article, but follow the methodologies described in the paper published at BMC Bioinformatics, which are significantly different from the bioRxiv version.
 
+# Changes in this branch
+- New docker image that is singularity friendly (directly convert to singularity without having to hack the image)
+- Better logging to convey exactly what is going on (no GNU parallel, use of progress bars, much more concise and readable messages)
+- Better error and exception handling - avoiding phantom fails which do not reveal what exactly is the problem (e.g., empty variant files etc)
+
+Caveats
+These changes have been tested only for variant calling, and not for the training flow
+Currently, these features are only tested for Illumina variant calling passing `--chromosomes` argument
+
 # Information regarding HELLO's code and usage
 
 (NEW) PacBio haplotagged model is available in models directory.
