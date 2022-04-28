@@ -15,9 +15,9 @@ The models released in this package (including models for hybrid variant calling
 - Better logging to convey exactly what is going on (no GNU parallel, use of progress bars, much more concise and readable messages)
 - Better error and exception handling - avoiding phantom fails which do not reveal what exactly is the problem (e.g., empty variant files etc)
 
-Caveats
-These changes have been tested only for variant calling, and not for the training flow
-Currently, these features are only tested for Illumina variant calling passing `--chromosomes` argument
+## Caveats
+- These changes have been tested only for variant calling, and not for the training flow
+- Currently, these features are only tested for Illumina variant calling passing `--chromosomes` argument
 
 # Information regarding HELLO's code and usage
 
