@@ -12,24 +12,23 @@ The models released in this package (including models for hybrid variant calling
 
 # Information regarding HELLO's code and usage
 
-(NEW) PacBio haplotagged model is available in models directory. The source code for running the model is in hello_dev.tar.gz, pending merge.
-
-*NOTE*: By default HELLO calls variants for chromosomes 1-22 only. To change this behavior, please use the --chromosomes option.
+(NEW) PacBio haplotagged model is available in models directory.
 
 The repository contains files for HELLO - a small variant caller that is designed for running standalone and hybrid small variant calling.
 
 The following Docker image may be used with the tool. These images may not be final, and we will update here when the images are updated.
 
-`docker pull oddjobs/hello_image.x86_64`
+`docker pull oddjobs/hello_deps`
 
-To build the tool, please run
+To build the tool, please run inside docker container
 
 ```
+git clone https://github.com/anands-repo/hello.git
+cd hello
 cmake .
 make -j 12
 ```
 
-NOTE: To properly download models, git-lfs needs to be installed. Once installed, please do `git lfs pull` inside the git repo.
 
 To run Illumina variant calling, please use the following command
 
@@ -67,16 +66,3 @@ python python/call.py \
     --mapq_threshold 5 \
     --reconcilement_size 0
 ```
-
-The output VCF file may be found in `$workdir/results.mean.vcf`.
-
-Errata: Currently, the VCF output by the tool has a syntax error with the INFO field. This may be fixed with the following code
-```
-fix_vcf() {
-    correct_string="##INFO=<ID=MixtureOfExpertPrediction,Type=String,Number=1,Description=\"Mean predictions from experts\">"
-    cat $1 | sed "s?##INFO=<ID=MixtureOfExpertPrediction,Description=\"Mean predictions from experts\"?$correct_string?g" > $2
-}
-
-fix_vcf $workdir/results.mean.vcf $workdir/results.mean.corrected.vcf
-```
-
