@@ -46,7 +46,7 @@ python python/call.py \
 ```
 
 
-To run PacBio variant calling, please use the following command (please add `--include_hp` option, and use the haplotag model in the `models` directory).
+To run PacBio variant calling, please use the following command (please add `--include_hp` option, and use the haplotag model in the `models` directory when using haplotagged BAM files).
 
 ```
 python python/call.py \
