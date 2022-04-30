@@ -13,11 +13,7 @@ The models released in this package (including models for hybrid variant calling
 # Changes in this branch
 - New docker image that is singularity friendly (directly convert to singularity without having to hack the image)
 - Better logging to convey exactly what is going on (no GNU parallel, use of progress bars, much more concise and readable messages)
-- Better error and exception handling - avoiding phantom fails which do not reveal what exactly is the problem (e.g., empty variant files etc)
-
-## Caveats
-- These changes have been tested only for variant calling, and not for the training flow
-- Currently, these features are only tested for Illumina variant calling passing `--chromosomes` argument
+- Better error and exception handling
 
 # Information regarding HELLO's code and usage
 
@@ -38,6 +34,7 @@ cmake .
 make -j 12
 ```
 
+Note that the docker image has git-lfs installed. If one wishes to clone the repository and models outside of the container, git-lfs will need to be installed.
 
 To run Illumina variant calling, please use the following command
 
@@ -51,7 +48,7 @@ python python/call.py \
 ```
 
 
-To run PacBio variant calling, please use the following command (`--include_hp` to be added for haplotagged PacBio reads).
+To run PacBio variant calling, please use the following command (please add `--include_hp` option, and use the haplotag model in the `models` directory).
 
 ```
 python python/call.py \
