@@ -7,6 +7,7 @@ HELLO is a Deep Neural Network-based small variant caller that can call variants
 The methodologies used in HELLO* are described in our publication at BMC Bioinformatics: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-021-04311-4
 
 # Changes in this branch
+The original code was released in the branch `devel_bugfix`. This branch contains some improvements, namely.
 - New docker image that is singularity friendly (directly convert to singularity without having to hack the image)
 - Better logging to convey exactly what is going on (no GNU parallel, use of progress bars, much more concise and readable messages)
 - Better error and exception handling
