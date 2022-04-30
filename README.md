@@ -8,7 +8,7 @@ The methodologies used in HELLO are described in our publication at BMC Bioinfor
 
 Older methodologies used in a prior version of HELLO, with only support for hybrid variant calling, are described at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1.
 
-The models released in this package (including models for hybrid variant calling) do not follow methodologies described in the bioRxiv article, but follow the methodologies described in the paper published at BMC Bioinformatics, which are significantly different from the bioRxiv version.
+HELLO currently does not follow methodologies described in the bioRxiv article, but the methodologies described in the paper published at BMC Bioinformatics, which are significantly different from the bioRxiv version.
 
 # Changes in this branch
 - New docker image that is singularity friendly (directly convert to singularity without having to hack the image)
