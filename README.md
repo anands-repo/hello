@@ -11,7 +11,7 @@ The methodologies used in HELLO* are described in our publication at BMC Bioinfo
 - Better logging to convey exactly what is going on (no GNU parallel, use of progress bars, much more concise and readable messages)
 - Better error and exception handling
 
-Note that these changes are only implemented and tested for variant calling, and not for training. Please refer to the `devel_bugfix` branch for training code.
+Note that these changes are only implemented and tested for variant calling, and not for training. Please refer to the `devel_bugfix` branch for training code if the changes in this branch break training.
 
 # Information regarding HELLO's code and usage
 
