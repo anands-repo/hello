@@ -15,6 +15,8 @@ The models released in this package (including models for hybrid variant calling
 - Better logging to convey exactly what is going on (no GNU parallel, use of progress bars, much more concise and readable messages)
 - Better error and exception handling
 
+Note that these changes are only implemented and tested for variant calling, and not for training. Please refer to `devel_bugfix` branch for training code.
+
 # Information regarding HELLO's code and usage
 
 (NEW) PacBio haplotagged model is available in models directory.
