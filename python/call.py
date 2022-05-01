@@ -20,6 +20,7 @@ import torch
 import numpy as np
 import random
 import os
+import re
 
 libCallability.initLogging(False)
 torch.set_num_threads(1)
@@ -77,6 +78,11 @@ def get_reference_chromosomes(ref):
         prefixed_chromosomes = references.intersection(["chr%s" % i for i in base_chromosomes])
 
     return max(no_prefix_chromosomes, prefixed_chromosomes, key=lambda x: len(x))
+
+
+def sort_hotspots(hotspots):
+    pattern = re.compile(r"job_chromosome(?:.*?)_job([0-9]+).txt")
+    return sorted(hotspots, key=lambda x: int(pattern.match(x).group(1)))
 
 
 def main(args):
@@ -145,6 +151,7 @@ def main(args):
             hotspot_results.append(result)
 
         logger.info("Combining all hotspots and sharding")
+        hotspot_results = sort_hotspots(hotspot_results)
         hotspot_name = os.path.join(output_dir, "hotspots.txt")
         with open(hotspot_name, "w") as fhandle:
             for r in hotspot_results:
