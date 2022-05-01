@@ -82,7 +82,7 @@ def get_reference_chromosomes(ref):
 
 def sort_hotspots(hotspots):
     pattern = re.compile(r"job_chromosome(?:.*?)_job([0-9]+).txt")
-    return sorted(hotspots, key=lambda x: int(pattern.match(x).group(1)))
+    return sorted(hotspots, key=lambda x: int(pattern.match(os.path.split(x)[-1]).group(1)))
 
 
 def main(args):

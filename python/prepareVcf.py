@@ -223,7 +223,8 @@ def main(args):
 
     chromosomes = set();
 
-    for i, chr_ in enumerate(tqdm.tqdm(mapper(vcfWrapper, callArgs), desc="VCF prep")):
+    for i, chr_ in enumerate(
+        tqdm.tqdm(mapper(vcfWrapper, callArgs), desc="VCF prep", total=len(callArgs))):
         chromosomes = chromosomes.union(chr_);
 
     def combineVcfs(suffix, info, label):
