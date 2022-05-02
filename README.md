@@ -76,4 +76,4 @@ Additional details on tool usage can be found in our paper.
 
 -----
 
-* Older methodologies used in a prior version of HELLO, with only support for hybrid variant calling, are described at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1. The bioRxiv paper describes substantially different methodology compared to the BMC Bioinformatics paper. This repository does not follow the bioRxiv manuscript.
+*Older methodologies used in a prior version of HELLO, with only support for hybrid variant calling, are described at https://www.biorxiv.org/content/10.1101/2020.03.23.004473v1. The bioRxiv paper describes substantially different methodology compared to the BMC Bioinformatics paper. This repository does not follow the bioRxiv manuscript.
